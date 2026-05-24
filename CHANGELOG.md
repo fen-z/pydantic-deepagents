@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.20] - 2026-05-18
+
+### Fixed
+
+- **`[WinError 2]` crash on Windows when calling the `execute` tool** ([#108](https://github.com/vstorm-co/pydantic-deepagents/issues/108)) — bumped the `pydantic-ai-backend` floor from `>=0.2.4` to `>=0.2.7`. Releases before 0.2.7 hardcoded `["sh", "-c", command]` in `LocalBackend.execute()`, so every shell invocation on Windows failed with `FileNotFoundError: [WinError 2] The system cannot find the file specified`, regardless of whether the target executable (e.g. `powershell`, `pwsh.exe`) was on `PATH`. `pydantic-ai-backend 0.2.7` routes through `_shell_cmd()` (`cmd /c` on `win32`, `sh -c` elsewhere) and adds `async_execute()` with cancellation support.
+
+### Changed
+
+- **Bumped minimum versions of all `pydantic-ai-*` sister packages** so a fresh install pulls the latest releases by default: `pydantic-ai-slim>=1.97.0` (was `>=1.77.0`), `pydantic-ai-backend>=0.2.7` (was `>=0.2.4`, for both `[console]` and `[docker]` extras), `summarization-pydantic-ai>=0.1.4` (was `>=0.1.3`), `subagents-pydantic-ai>=0.2.3` (was `>=0.2.1`), `pydantic-ai-shields>=0.3.2` (was `>=0.3.1`).
+
+### Infrastructure
+
+- **Renovate config** ([`renovate.json`](renovate.json)) — opt-in dependency bot scoped to the five vstorm-co sibling packages (`pydantic-ai-todo`, `pydantic-ai-backend`, `summarization-pydantic-ai`, `subagents-pydantic-ai`, `pydantic-ai-shields`). All other dependencies are explicitly disabled. New releases of these packages will get grouped PRs that bump both `pyproject.toml` floors and `uv.lock`, with auto-merge on green CI. Activates once the Renovate GitHub App is installed on the `vstorm-co` organization.
+
 ## [0.3.19] - 2026-05-14
 
 ### Added
@@ -848,4 +862,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Directory structure diagram
 - Updated `docs/examples/full-app.md` with `workspace_root` in SessionManager example
 - Updated `examples/full_app/app.py` to use `workspace_root` for persistent user files
-
