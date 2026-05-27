@@ -327,6 +327,41 @@ class BranchOverlay:
         """
         return set(self._deleted)
 
+    @contextlib.contextmanager
+    def snapshot(
+        self,
+        parent_root: Path,
+        *,
+        include_venv: bool = False,
+    ) -> Generator[str, None, None]:
+        """Yield a tempdir presenting an isolated, branch-flavoured view of ``parent_root``.
+
+        Parent files are file-level symlinks (so the subprocess can read
+        them with no copy); overlay writes are materialised as real files;
+        deletions remove the corresponding symlink. The directory is
+        cleaned up on context exit regardless of how the body returns.
+
+        ``parent_root`` is taken explicitly rather than read off
+        :attr:`_parent` because not every backend has a ``root_dir``
+        (``StateBackend`` does not); the caller decides whether
+        snapshotting is meaningful before invoking this.
+
+        When ``include_venv=True`` and ``parent_root / ".venv"`` exists, a
+        symlink to it is added to the snapshot. ``.venv`` is normally in
+        :data:`_SNAP_SKIP_DIRS` to keep snapshot creation lean, but a test
+        runner (``pytest``, ``uv run``, etc.) typically needs the virtual
+        environment on ``PATH`` — opting in restores it without copying.
+        Off by default so the existing ``execute`` consumer keeps the
+        slim layout.
+        """
+        with _branch_snapshot(parent_root, self._overlay, self._changes, self._deleted) as tmp:
+            if include_venv:
+                venv_src = parent_root / ".venv"
+                venv_dst = Path(tmp) / ".venv"
+                if venv_src.exists() and not venv_dst.exists():
+                    venv_dst.symlink_to(venv_src)
+            yield tmp
+
     def delete(self, path: str) -> None:
         """Mark ``path`` deleted in this branch — propagated on merge.
 

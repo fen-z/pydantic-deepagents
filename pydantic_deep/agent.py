@@ -600,7 +600,11 @@ def create_deep_agent(  # noqa: C901
         require_write_approval = interrupt_on.get("write_file", False) or interrupt_on.get(
             "edit_file", False
         )
-        require_execute_approval = interrupt_on.get("execute", True)
+        # Default False: only require approval when explicitly configured.
+        # Default True caused a broken state — execute deferred but DeferredToolRequests
+        # never added to output types (has_interrupt_tools checked any(interrupt_on.values())
+        # which is False for an empty dict). Use explicit {"execute": True} to require approval.
+        require_execute_approval = interrupt_on.get("execute", False)
 
         # Determine if execute should be included
         # If explicitly set, use that; otherwise auto-detect from backend type

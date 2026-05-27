@@ -646,7 +646,7 @@ async def test_build_branch_outcomes_uses_terminal_states_for_error_count():
     bids = list(coord.branches.keys())
     coord.branches[bids[1]].status.state = "failed"
 
-    outcomes, goal = coord._build_branch_outcomes()
+    outcomes, goal = await coord._build_branch_outcomes()
     assert goal == "seed"
     error_flags = {o.branch_id: o.error_count for o in outcomes}
     assert error_flags[bids[0]] == 0
@@ -831,7 +831,7 @@ async def test_build_branch_outcomes_skips_non_request_messages_for_goal():
     ]
     # The other branch's task already produced a result; force the fallback to
     # partial_history by cancelling it (so .done() is True but .cancelled() is too).
-    outcomes, goal = coord._build_branch_outcomes()
+    outcomes, goal = await coord._build_branch_outcomes()
     assert goal in ("real goal", "make a thing")  # whichever branch is iterated first
     assert len(outcomes) == 2
 
@@ -971,7 +971,7 @@ async def test_build_branch_outcomes_skips_non_request_messages_in_goal_scan():
         partial_history=history,
     )
     coord.branches["x"] = rt
-    outcomes, goal = coord._build_branch_outcomes()
+    outcomes, goal = await coord._build_branch_outcomes()
     assert goal == "real goal"
     assert len(outcomes) == 1
 
@@ -1031,7 +1031,7 @@ async def test_build_branch_outcomes_with_synthetic_runtimes():
     coord.branches["mixed"] = _runtime("mixed", history_mixed)
 
     await asyncio.gather(*(rt.task for rt in coord.branches.values()))
-    outcomes, goal = coord._build_branch_outcomes()
+    outcomes, goal = await coord._build_branch_outcomes()
     assert goal == "goal-from-mixed"
     assert {o.branch_id for o in outcomes} == {"empty", "noparts", "mixed"}
 
@@ -1172,3 +1172,484 @@ async def test_format_diff_report_deleted_operation_renders_deleted_label():
     assert "gone.py" in prompt
     assert "alpha) DELETED" in prompt
     assert "0B" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Test-runner hook: per-branch test_pass_ratio.
+# ---------------------------------------------------------------------------
+
+
+async def test_outcomes_carry_test_pass_ratio_none_when_disabled():
+    """No ``test_command`` configured → every outcome's ratio is ``None``."""
+    coord, _deps = await _coordinator_with_two_branches()
+    outcomes, _ = await coord._build_branch_outcomes()
+    assert all(o.test_pass_ratio is None for o in outcomes)
+
+
+async def test_outcomes_skip_runner_for_non_local_backend():
+    """``StateBackend`` parent → runner is no-op even if ``test_command`` is set."""
+    deps = DeepAgentDeps(backend=StateBackend())
+    agent = Agent(TestModel(), deps_type=DeepAgentDeps)
+    coord = ForkCoordinator(
+        agent=agent,
+        parent_deps=deps,
+        max_branches=2,
+        max_depth=1,
+        store=InMemoryForkStateStore(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        test_command="echo would-fail-but-cant-run",
+        test_timeout_s=5.0,
+    )
+    await coord.fork(
+        [BranchSpec(label="a", steer="A"), BranchSpec(label="b", steer="B")],
+        parent_history=[ModelRequest(parts=[UserPromptPart(content="go")])],
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()), return_exceptions=True)
+    outcomes, _ = await coord._build_branch_outcomes()
+    assert all(o.test_pass_ratio is None for o in outcomes)
+
+
+async def _coordinator_with_local_backend_branch(
+    tmp_path: Any,
+    *,
+    test_command: str,
+    test_timeout_s: float = 30.0,
+) -> tuple[ForkCoordinator, str]:
+    """Spin up a coordinator backed by a real ``LocalBackend`` and one running branch.
+
+    Returns the coordinator and the spawned branch's id. Drains the branch
+    task before returning so ``_run_tests_for_branch`` finds the overlay
+    still attached (overlays only release on merge / abort).
+    """
+    from pydantic_ai_backends import LocalBackend
+
+    backend = LocalBackend(root_dir=str(tmp_path))
+    backend.write("seed.txt", "parent\n")
+    deps = DeepAgentDeps(backend=backend)
+    agent = Agent(TestModel(), deps_type=DeepAgentDeps)
+    coord = ForkCoordinator(
+        agent=agent,
+        parent_deps=deps,
+        max_branches=2,
+        max_depth=1,
+        store=InMemoryForkStateStore(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        test_command=test_command,
+        test_timeout_s=test_timeout_s,
+    )
+    await coord.fork(
+        [BranchSpec(label="a", steer="A")],
+        parent_history=[ModelRequest(parts=[UserPromptPart(content="go")])],
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()), return_exceptions=True)
+    branch_id = next(iter(coord.branches.keys()))
+    return coord, branch_id
+
+
+async def test_run_tests_for_branch_returns_one_on_exit_zero(tmp_path: Any) -> None:
+    coord, bid = await _coordinator_with_local_backend_branch(tmp_path, test_command="true")
+    ratio = await coord._run_tests_for_branch(coord.branches[bid])
+    assert ratio == 1.0
+
+
+async def test_run_tests_for_branch_returns_zero_on_non_zero_exit(tmp_path: Any) -> None:
+    coord, bid = await _coordinator_with_local_backend_branch(tmp_path, test_command="false")
+    ratio = await coord._run_tests_for_branch(coord.branches[bid])
+    assert ratio == 0.0
+
+
+async def test_run_tests_for_branch_returns_none_on_timeout(tmp_path: Any) -> None:
+    """Distinguished from ``0.0`` — a timeout is "no signal", not "tests failed"."""
+    coord, bid = await _coordinator_with_local_backend_branch(
+        tmp_path, test_command="sleep 5", test_timeout_s=0.1
+    )
+    ratio = await coord._run_tests_for_branch(coord.branches[bid])
+    assert ratio is None
+
+
+async def test_compute_signals_uses_winner_test_pass_ratio():
+    """A real ratio on the winner → ConfidenceSignals carries it, cap-at-0.65 lifts."""
+    coord, _deps = await _coordinator_with_two_branches()
+    a_id = _resolve_winner_id(coord, "a")
+    outcomes = [
+        BranchOutcome(
+            branch_id=a_id,
+            branch_label="alpha",
+            steer="A",
+            final_assistant_message="ok",
+            cost_usd=None,
+            turns=2,
+            error_count=0,
+            retry_count=0,
+            stuck_loop_hits=0,
+            test_pass_ratio=1.0,
+        )
+    ]
+    signals = coord._compute_signals(_make_report(agreement_score=0.0), outcomes, a_id)
+    assert signals.test_pass_ratio == 1.0
+    # heuristic = 1.0*0.4 + 1.0*0.4 + 1.0*0.2 = 1.0 ; no cap because ratio is not None
+    assert compute_confidence(signals, 1.0) == pytest.approx(1.0)
+
+
+async def test_compute_signals_falls_back_to_none_when_winner_has_no_ratio():
+    """Winner outcome with ``None`` → cap-at-0.65 stays active, identical to today."""
+    coord, _deps = await _coordinator_with_two_branches()
+    a_id = _resolve_winner_id(coord, "a")
+    outcomes = [
+        BranchOutcome(
+            branch_id=a_id,
+            branch_label="alpha",
+            steer="A",
+            final_assistant_message="ok",
+            cost_usd=None,
+            turns=2,
+            error_count=0,
+            retry_count=0,
+            stuck_loop_hits=0,
+            test_pass_ratio=None,
+        )
+    ]
+    signals = coord._compute_signals(_make_report(agreement_score=0.0), outcomes, a_id)
+    assert signals.test_pass_ratio is None
+    # ratio=None ⇒ cap-at-0.65 is *enabled*; raw heuristic here is
+    # 1.0*0.4 + 0 + 1.0*0.2 = 0.6 which is below the cap, so the value passes
+    # through unmodified — the cap protects against false-positive auto-merge
+    # even when the heuristic happens to land low.
+    assert compute_confidence(signals, 1.0) == pytest.approx(0.6)
+
+
+async def test_run_tests_materializes_overlay_writes(tmp_path: Any) -> None:
+    """A file overwritten in the overlay shows the new content to the test command."""
+    from pydantic_ai_backends import LocalBackend
+
+    backend = LocalBackend(root_dir=str(tmp_path))
+    backend.write("marker.txt", "parent\n")
+    deps = DeepAgentDeps(backend=backend)
+    agent = Agent(TestModel(), deps_type=DeepAgentDeps)
+    coord = ForkCoordinator(
+        agent=agent,
+        parent_deps=deps,
+        max_branches=2,
+        max_depth=1,
+        store=InMemoryForkStateStore(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        # exit 0 only when the snapshot shows the branch's overwrite.
+        test_command="grep -q '^branch$' marker.txt",
+        test_timeout_s=10.0,
+    )
+    await coord.fork(
+        [BranchSpec(label="a", steer="A")],
+        parent_history=[ModelRequest(parts=[UserPromptPart(content="go")])],
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()), return_exceptions=True)
+    bid = next(iter(coord.branches.keys()))
+    rt = coord.branches[bid]
+    assert rt.overlay is not None
+    rt.overlay.write("marker.txt", "branch\n")
+
+    ratio = await coord._run_tests_for_branch(rt)
+    assert ratio == 1.0
+
+
+async def test_runner_failure_does_not_block_sibling_branches(tmp_path: Any) -> None:
+    """One branch's runner raising returns ``None``; the other still produces a ratio."""
+    from pydantic_ai_backends import LocalBackend
+
+    backend = LocalBackend(root_dir=str(tmp_path))
+    backend.write("seed.txt", "x\n")
+    deps = DeepAgentDeps(backend=backend)
+    agent = Agent(TestModel(), deps_type=DeepAgentDeps)
+    coord = ForkCoordinator(
+        agent=agent,
+        parent_deps=deps,
+        max_branches=2,
+        max_depth=1,
+        store=InMemoryForkStateStore(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        test_command="true",
+        test_timeout_s=10.0,
+    )
+    await coord.fork(
+        [BranchSpec(label="a", steer="A"), BranchSpec(label="b", steer="B")],
+        parent_history=[ModelRequest(parts=[UserPromptPart(content="go")])],
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()), return_exceptions=True)
+
+    # Force one branch's overlay snapshot to fail by detaching its overlay —
+    # _run_tests_for_branch returns None for that branch.
+    bids = list(coord.branches.keys())
+    coord.branches[bids[1]].overlay = None
+
+    outcomes, _ = await coord._build_branch_outcomes()
+    ratios = {o.branch_id: o.test_pass_ratio for o in outcomes}
+    assert ratios[bids[0]] == 1.0
+    assert ratios[bids[1]] is None
+
+
+async def test_run_tests_for_branch_returns_none_on_spawn_failure(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``create_subprocess_exec`` raising ``OSError`` → log + return ``None``."""
+    import logging
+
+    coord, bid = await _coordinator_with_local_backend_branch(tmp_path, test_command="true")
+
+    async def _raise_oserror(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("simulated spawn failure")
+
+    with (
+        patch("asyncio.create_subprocess_exec", _raise_oserror),
+        caplog.at_level(logging.WARNING, logger="pydantic_deep.toolsets.forking.coordinator"),
+    ):
+        ratio = await coord._run_tests_for_branch(coord.branches[bid])
+    assert ratio is None
+    assert "failed to spawn" in caplog.text
+
+
+async def test_run_tests_for_branch_swallows_snapshot_errors(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Any exception inside the snapshot/subprocess block → log + return ``None``.
+
+    A broken test runner must never abort :meth:`resolve` — the safety
+    rail returns ``None`` so :meth:`compute_confidence` keeps its
+    cap-at-0.65 fallback active.
+    """
+    import logging
+
+    coord, bid = await _coordinator_with_local_backend_branch(tmp_path, test_command="true")
+    rt = coord.branches[bid]
+    assert rt.overlay is not None
+
+    def _bad_snapshot(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("snapshot exploded")
+
+    with (
+        patch.object(rt.overlay, "snapshot", _bad_snapshot),
+        caplog.at_level(logging.WARNING, logger="pydantic_deep.toolsets.forking.coordinator"),
+    ):
+        ratio = await coord._run_tests_for_branch(rt)
+    assert ratio is None
+    assert "snapshot creation failed" in caplog.text
+
+
+async def test_run_tests_for_branch_escalates_to_kill_when_terminate_ignored(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Process that ignores SIGTERM → kill escalation runs, ratio is ``None``.
+
+    Covers the orphan-process safety net: if ``proc.terminate()`` plus a
+    grace ``wait_for`` does not collect the child, the runner escalates
+    to ``proc.kill()`` and waits again before reporting ``None``.
+    """
+    import logging
+
+    coord, bid = await _coordinator_with_local_backend_branch(
+        tmp_path, test_command="true", test_timeout_s=10.0
+    )
+    rt = coord.branches[bid]
+
+    class _StubProc:
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.terminate_called = False
+            self.kill_called = False
+
+        def terminate(self) -> None:
+            self.terminate_called = True
+
+        def kill(self) -> None:
+            self.kill_called = True
+
+        async def wait(self) -> int:
+            # The real wait never resolves on its own; let wait_for time out.
+            await asyncio.sleep(3600)
+            return 0  # pragma: no cover - unreachable past sleep
+
+    stub = _StubProc()
+
+    async def _stub_spawn(*_args: Any, **_kwargs: Any) -> _StubProc:
+        return stub
+
+    # First wait_for (the test-command wall clock) and the terminate-grace
+    # wait_for both raise TimeoutError; the kill-grace wait_for is suppressed.
+    timeouts = iter([asyncio.TimeoutError(), asyncio.TimeoutError(), asyncio.TimeoutError()])
+
+    async def _stub_wait_for(coro: Any, timeout: float) -> Any:
+        # Drain the coroutine to avoid "coroutine was never awaited" warnings.
+        coro.close()
+        raise next(timeouts)
+
+    with (
+        patch("asyncio.create_subprocess_exec", _stub_spawn),
+        patch("asyncio.wait_for", _stub_wait_for),
+        caplog.at_level(logging.WARNING, logger="pydantic_deep.toolsets.forking.coordinator"),
+    ):
+        ratio = await coord._run_tests_for_branch(rt)
+
+    assert ratio is None
+    assert stub.terminate_called
+    assert stub.kill_called
+    assert "timed out" in caplog.text
+
+
+async def test_live_fork_capability_threads_test_command_to_coordinator():
+    """``LiveForkCapability(test_command=..., test_timeout_s=...)`` lands on the coordinator."""
+    from pydantic_deep.capabilities.forking import LiveForkCapability
+
+    cap = LiveForkCapability(test_command="pytest -q", test_timeout_s=42.0)
+    assert cap.test_command == "pytest -q"
+    assert cap.test_timeout_s == 42.0
+
+    deps = DeepAgentDeps(backend=StateBackend())
+
+    class _Ctx:
+        def __init__(self) -> None:
+            self.deps = deps
+
+    ctx = _Ctx()
+    cap._agent_ref = Agent(TestModel(), deps_type=DeepAgentDeps)
+    clone = await cap.for_run(ctx)  # pyright: ignore[reportArgumentType]
+    assert clone.test_command == "pytest -q"
+    assert clone.test_timeout_s == 42.0
+    coord = getattr(deps, "fork_coordinator", None)
+    assert coord is not None
+    assert coord.test_command == "pytest -q"
+    assert coord.test_timeout_s == 42.0
+
+
+async def test_live_fork_capability_end_to_end_produces_test_pass_ratio(tmp_path: Any) -> None:
+    """End-to-end check: a real ``LiveForkCapability`` config produces a ratio in outcomes.
+
+    Complements ``test_live_fork_capability_threads_test_command_to_coordinator``
+    — that test only verifies the kwargs land on the coordinator. This one
+    drives the runner through the full path: capability ``for_run`` →
+    coordinator → ``_build_branch_outcomes`` → ``BranchOutcome.test_pass_ratio``.
+    """
+    from pydantic_ai_backends import LocalBackend
+
+    from pydantic_deep.capabilities.forking import LiveForkCapability
+
+    backend = LocalBackend(root_dir=str(tmp_path))
+    backend.write("seed.txt", "x\n")
+    deps = DeepAgentDeps(backend=backend)
+
+    class _Ctx:
+        def __init__(self) -> None:
+            self.deps = deps
+
+    cap = LiveForkCapability(test_command="true", test_timeout_s=10.0)
+    cap._agent_ref = Agent(TestModel(), deps_type=DeepAgentDeps)
+    await cap.for_run(_Ctx())  # pyright: ignore[reportArgumentType]
+
+    coord = getattr(deps, "fork_coordinator", None)
+    assert coord is not None
+    await coord.fork(
+        [BranchSpec(label="a", steer="A")],
+        parent_history=[ModelRequest(parts=[UserPromptPart(content="go")])],
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()), return_exceptions=True)
+    outcomes, _ = await coord._build_branch_outcomes()
+    assert len(outcomes) == 1
+    assert outcomes[0].test_pass_ratio == 1.0
+
+
+async def test_run_tests_materializes_overlay_writes_as_real_file(tmp_path: Any) -> None:
+    """Overlay writes appear as real files in the snapshot, not symlinks to the parent.
+
+    Complements ``test_run_tests_materializes_overlay_writes`` — that test
+    asserts the content; this one asserts the file shape (a symlink would
+    incorrectly point back at the parent's bytes).
+    """
+    from pathlib import Path as _Path
+
+    from pydantic_ai_backends import LocalBackend
+
+    backend = LocalBackend(root_dir=str(tmp_path))
+    backend.write("marker.txt", "parent\n")
+    deps = DeepAgentDeps(backend=backend)
+    overlay = BranchOverlay(backend)
+    overlay.write("marker.txt", "branch\n")
+
+    with overlay.snapshot(_Path(deps.backend.root_dir)) as snap:  # type: ignore[attr-defined]
+        target = _Path(snap) / "marker.txt"
+        assert target.exists()
+        assert target.is_file()
+        assert not target.is_symlink()
+        assert target.read_text() == "branch\n"
+
+
+async def test_branch_overlay_snapshot_include_venv_symlinks_when_present(
+    tmp_path: Any,
+) -> None:
+    """``include_venv=True`` adds a ``.venv`` symlink when the parent has one."""
+    from pathlib import Path as _Path
+
+    from pydantic_ai_backends import LocalBackend
+
+    (tmp_path / ".venv").mkdir()
+    (tmp_path / ".venv" / "marker").write_text("hi")
+
+    backend = LocalBackend(root_dir=str(tmp_path))
+    overlay = BranchOverlay(backend)
+
+    with overlay.snapshot(_Path(str(tmp_path)), include_venv=True) as snap:
+        venv = _Path(snap) / ".venv"
+        assert venv.is_symlink()
+        assert venv.resolve() == (tmp_path / ".venv").resolve()
+
+
+async def test_branch_overlay_snapshot_default_skips_venv(tmp_path: Any) -> None:
+    """``include_venv`` defaults to False — the existing ``execute`` consumer stays slim."""
+    from pathlib import Path as _Path
+
+    from pydantic_ai_backends import LocalBackend
+
+    (tmp_path / ".venv").mkdir()
+    backend = LocalBackend(root_dir=str(tmp_path))
+    overlay = BranchOverlay(backend)
+
+    with overlay.snapshot(_Path(str(tmp_path))) as snap:
+        assert not (_Path(snap) / ".venv").exists()
+
+
+async def test_run_tests_for_branch_returns_none_for_invalid_root_dir_type(
+    tmp_path: Any,
+) -> None:
+    """Backend whose ``root_dir`` is not a ``str``/``Path`` → ``None``, no crash.
+
+    Guards the ``isinstance(parent_root_obj, (str, Path))`` check — a
+    backend that exposes ``root_dir`` as a callable or some other shape
+    must not crash the runner; it must return ``None`` (no signal).
+    """
+    from pydantic_ai_backends import LocalBackend
+
+    class _OddRootBackend(LocalBackend):
+        @property
+        def root_dir(self) -> Any:  # type: ignore[override]
+            # Callable shape — the runner's isinstance check should reject this.
+            return lambda: "not-a-path"
+
+    backend = _OddRootBackend(root_dir=str(tmp_path))
+    deps = DeepAgentDeps(backend=backend)
+    agent = Agent(TestModel(), deps_type=DeepAgentDeps)
+    coord = ForkCoordinator(
+        agent=agent,
+        parent_deps=deps,
+        max_branches=2,
+        max_depth=1,
+        store=InMemoryForkStateStore(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        test_command="true",
+        test_timeout_s=5.0,
+    )
+    await coord.fork(
+        [BranchSpec(label="a", steer="A")],
+        parent_history=[ModelRequest(parts=[UserPromptPart(content="go")])],
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()), return_exceptions=True)
+    bid = next(iter(coord.branches.keys()))
+
+    ratio = await coord._run_tests_for_branch(coord.branches[bid])
+    assert ratio is None

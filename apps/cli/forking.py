@@ -209,6 +209,8 @@ async def start_fork_from_cli(
         max_depth=cap.max_depth,
         store=cap.store,  # type: ignore[arg-type]
         keep_artifacts=cap.keep_artifacts,
+        test_command=cap.test_command,
+        test_timeout_s=cap.test_timeout_s,
     )
     coordinator.capability = cap
     app.deps.fork_coordinator = coordinator

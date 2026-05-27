@@ -534,8 +534,39 @@ Three signals weighted into a single heuristic, then multiplied by the judge's o
 
 `effective_confidence = heuristic × judge_confidence`. Clamped to `[0.0, 1.0]`.
 
-!!! warning "Auto-commit is currently dormant"
-    Stage 6 ships without per-branch test-runner integration, so `test_pass_ratio` is always `None`. When the test signal is missing, the heuristic is **capped at 0.65** before the multiplication — a deliberate safety rail. With the default threshold of 0.80, `auto_with_fallback` always falls back to the manual picker until a test-signal hook lands (tracked as a follow-up). `auto` mode commits regardless of confidence.
+### Test-runner hook for `test_pass_ratio`
+
+By default `test_pass_ratio` is `None` — `compute_confidence` then **caps the heuristic at 0.65** before the multiplication, a deliberate safety rail. With the default threshold of 0.80 this means `auto_with_fallback` falls back to the manual picker.
+
+Configure a `test_command` on [`LiveForkCapability`][pydantic_deep.capabilities.forking.LiveForkCapability] to lift that cap when tests actually pass:
+
+```python
+from pydantic_deep import LiveForkCapability, create_deep_agent
+
+agent = create_deep_agent(
+    model="anthropic:claude-sonnet-4-6",
+    forking=LiveForkCapability(
+        test_command="pytest -q",   # any shell command; default is None
+        test_timeout_s=60.0,        # wall-clock cap per branch
+    ),
+    include_checkpoints=True,
+)
+```
+
+How it runs — inside [`ForkCoordinator.resolve`][pydantic_deep.toolsets.forking.coordinator.ForkCoordinator.resolve] each branch's overlay is materialised into a fresh tempdir (parent files as file-level symlinks, branch writes as real files, deleted paths absent), `test_command` is launched via [`asyncio.create_subprocess_exec`][asyncio.create_subprocess_exec] with `cwd` set to the tempdir, and the exit code maps to a per-branch ratio:
+
+| Exit code / outcome | `test_pass_ratio` | Cap at 0.65 |
+|---|---|---|
+| `0` | `1.0` | Lifted |
+| Non-zero | `0.0` | Lifted |
+| Timeout (> `test_timeout_s`) | `None` | Active |
+| Parent backend not `LocalBackend` (e.g. `StateBackend`) | `None` | Active |
+| Command failed to spawn / overlay missing | `None` | Active |
+
+Per-branch tests run concurrently via `asyncio.gather` so total wall-clock time is `max(branch_test_time)`, not the sum. The runner adds nothing to `branch_budget_usd` — it is wall-clock-bounded by `test_timeout_s`, not LLM cost.
+
+!!! info "Exit-code semantics — caveat"
+    The ratio is computed from the **process exit code only**: we do not parse pytest / jest counts from stdout. A `test_command` that exits 0 with zero tests collected reports `test_pass_ratio=1.0` — lifting the safety rail on a false signal. Mitigation: pick a `test_command` that fails when no tests run (e.g. add `pytest --strict-markers` plus a fixture that asserts collection > 0, or wrap with a guard script). A pytest-plugin-style counter for `passed / total` is tracked as a follow-up.
 
 ### Acceptance widget vs. picker fall-through
 
@@ -599,6 +630,7 @@ Stage 6 ships the judge but intentionally scopes it tightly:
 - **Per-domain judge prompts** (code vs. research) — single generic prompt; specialise later if needed.
 - **`combine` acceptance mode** — only meaningful for non-code outputs; intentionally excluded.
 - **Streaming the judge's evaluation** — we wait for the full `JudgeVerdict`; no partial results.
-- **Per-branch test integration** — `test_pass_ratio` is always `None` until a test-runner hook lands; the 0.65 cap forces `auto_with_fallback` to fall back to manual in practice.
+- **Test-count parsing (passed / total)** — `test_pass_ratio` is computed from the process exit code only; a pytest/jest-plugin counter is a follow-up.
+- **Auto-detection of `test_command`** (`pytest.ini`, `package.json`, `Makefile`) — `test_command` must be set explicitly on [`LiveForkCapability`][pydantic_deep.capabilities.forking.LiveForkCapability].
 - **`cost_category="judge"` attribution in `CostTracking`** — `pydantic-ai-shields` has no such field; the judge's usage rides on [`ResolveOutcome.judge_usage`][pydantic_deep.types.ResolveOutcome] instead.
 - **Override after `auto` / `vote` commit** — both modes commit immediately inside `resolve()`; switching winners after the fact requires rewinding via the `post-fork:<fork_id>` checkpoint anchor.

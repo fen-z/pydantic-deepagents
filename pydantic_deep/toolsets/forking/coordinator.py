@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import shlex
 import uuid
 import warnings
 from dataclasses import dataclass, field
@@ -302,6 +303,16 @@ class ForkCoordinator:
         store: The :class:`ForkStateStore` used to persist :class:`ForkHandle`.
         checkpoint_store: Optional explicit checkpoint store. When ``None``,
             the coordinator falls back to ``parent_deps.checkpoint_store``.
+        test_command: Optional shell command run against each branch's
+            materialised tree during :meth:`resolve` to feed the
+            ``test_pass_ratio`` confidence signal. ``None`` disables the
+            runner — the cap-at-0.65 safety rail then keeps
+            ``auto_with_fallback`` falling through to the manual picker.
+            Restricted to :class:`~pydantic_ai_backends.LocalBackend`
+            parents; non-local parents always produce ``None``.
+        test_timeout_s: Wall-clock cap (seconds) per branch test run. On
+            timeout the branch's ``test_pass_ratio`` is ``None`` (treated as
+            "no signal"), not ``0.0``.
     """
 
     def __init__(
@@ -316,6 +327,8 @@ class ForkCoordinator:
         aggregate_budget_usd: float | None = None,
         keep_artifacts: bool = False,
         materializer_root: Path | None = None,
+        test_command: str | None = None,
+        test_timeout_s: float = 60.0,
     ) -> None:
         self.agent = agent
         self.parent_deps = parent_deps
@@ -328,6 +341,8 @@ class ForkCoordinator:
         self.materializer_root: Path = (
             materializer_root if materializer_root is not None else Path(".pydantic-deep") / "forks"
         )
+        self.test_command = test_command
+        self.test_timeout_s = test_timeout_s
         self.branches: dict[str, BranchRuntime] = {}
         self._handle: ForkHandle | None = None
         self._lock = asyncio.Lock()
@@ -849,7 +864,97 @@ class ForkCoordinator:
             self._cached_outcome_strategy_kind = None
             return aborted
 
-    def _build_branch_outcomes(self) -> tuple[list[BranchOutcome], str]:
+    async def _run_tests_for_branch(self, rt: BranchRuntime) -> float | None:
+        """Run :attr:`test_command` against a snapshot of the branch and return a ratio.
+
+        Materialises the branch (parent ``LocalBackend.root_dir`` + overlay
+        writes / deletions) into a fresh tempdir via
+        :meth:`BranchOverlay.snapshot`, runs the command via
+        :func:`asyncio.create_subprocess_exec` (no shell — argv via
+        :func:`shlex.split`) with a ``test_timeout_s`` cap,
+        and returns:
+
+        - ``1.0`` on exit code ``0``
+        - ``0.0`` on any non-zero exit
+        - ``None`` when the runner is disabled, the parent backend has no
+          ``root_dir`` (e.g. :class:`StateBackend` in tests), the branch
+          overlay is gone, the command failed to spawn, or the run timed out
+
+        ``None`` is the "no signal" return — :func:`compute_confidence`
+        keeps the cap-at-0.65 safety rail active in that case, identical to
+        the no-test behaviour. ``0.0`` only fires for an explicit non-zero
+        exit, distinguishing "tests ran and some failed" from "we never
+        learned anything".
+
+        All exceptions raised by the materialiser or the subprocess setup
+        are caught and logged at ``WARNING`` — a broken test runner must
+        never cause :meth:`resolve` to fail. The accompanying ``asyncio.gather``
+        in :meth:`_build_branch_outcomes` therefore runs WITHOUT
+        ``return_exceptions=True``: a leaked exception is a real bug.
+        """
+        if self.test_command is None:
+            return None
+        parent = self.parent_deps.backend
+        parent_root_obj: Any = getattr(parent, "root_dir", None)
+        if not isinstance(parent_root_obj, (str, Path)):
+            return None
+        overlay = rt.overlay
+        if overlay is None:
+            return None
+        parent_root = Path(parent_root_obj)
+        # UV_NO_SYNC=1: editable deps with relative paths break in the temp snapshot.
+        env = {**os.environ, "UV_NO_SYNC": "1"}
+        # Off the event loop: the snapshot symlink walk is synchronous and would freeze the TUI.
+        loop = asyncio.get_running_loop()
+
+        def _enter() -> tuple[Any, Any]:
+            ctx = overlay.snapshot(parent_root, include_venv=True)
+            return ctx, ctx.__enter__()
+
+        try:
+            snap_ctx, snap = await loop.run_in_executor(None, _enter)
+        except Exception:
+            logger.warning(
+                "branch %s snapshot creation failed; reporting None",
+                rt.status.id,
+                exc_info=True,
+            )
+            return None
+        try:
+            try:
+                _argv = shlex.split(self.test_command)
+                proc = await asyncio.create_subprocess_exec(
+                    *_argv,
+                    cwd=snap,
+                    env=env,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+            except (OSError, FileNotFoundError) as exc:
+                logger.warning(
+                    "branch %s test command failed to spawn: %s",
+                    rt.status.id,
+                    exc,
+                )
+                return None
+            try:
+                returncode = await asyncio.wait_for(proc.wait(), timeout=self.test_timeout_s)
+            except asyncio.TimeoutError:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=_CANCEL_CLEANUP_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    # SIGTERM ignored — escalate so we don't leak an orphan.
+                    proc.kill()
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(proc.wait(), timeout=_CANCEL_CLEANUP_TIMEOUT_S)
+                logger.warning("branch %s test runner timed out", rt.status.id)
+                return None
+            return 1.0 if returncode == 0 else 0.0
+        finally:
+            await loop.run_in_executor(None, snap_ctx.__exit__, None, None, None)
+
+    async def _build_branch_outcomes(self) -> tuple[list[BranchOutcome], str]:
         """Materialise per-branch summaries + the parent's first user message.
 
         ``goal`` is the first :class:`UserPromptPart` content found in any
@@ -857,7 +962,16 @@ class ForkCoordinator:
         so the first one we encounter is canonical. Returns ``""`` if no
         ``UserPromptPart`` is present (defensive; the prompt builder handles
         an empty goal gracefully).
+
+        Test runs are dispatched concurrently across branches via
+        :func:`asyncio.gather`; the per-branch ratio (or ``None``) is
+        threaded into each :class:`BranchOutcome` so the judge sees it AND
+        :meth:`_compute_signals` can lift the cap-at-0.65 safety rail for
+        the winner.
         """
+        runtimes = list(self.branches.items())
+        test_ratios = await asyncio.gather(*(self._run_tests_for_branch(rt) for _, rt in runtimes))
+
         outcomes: list[BranchOutcome] = []
         goal = ""
         goal_found = False
@@ -867,7 +981,7 @@ class ForkCoordinator:
             "budget_exhausted",
             "aggregate_budget_exhausted",
         }
-        for branch_id, rt in self.branches.items():
+        for (branch_id, rt), test_pass_ratio in zip(runtimes, test_ratios, strict=True):
             messages = self._messages_for(rt)
             if not goal_found:
                 for msg in messages:
@@ -894,6 +1008,7 @@ class ForkCoordinator:
                     error_count=1 if rt.status.state in terminal_error_states else 0,
                     retry_count=count_retry_parts(messages),
                     stuck_loop_hits=count_stuck_loop_hits(messages),
+                    test_pass_ratio=test_pass_ratio,
                 )
             )
         return outcomes, goal
@@ -933,22 +1048,26 @@ class ForkCoordinator:
     ) -> ConfidenceSignals:
         """Build :class:`ConfidenceSignals` for the winning branch.
 
-        No per-branch test integration is available yet, so
-        ``test_pass_ratio`` is always ``None``; the cap-at-0.65 safety rail in
-        :func:`compute_confidence` keeps ``auto_with_fallback`` falling back to
-        manual until a real test signal lands (see follow-ups).
+        ``test_pass_ratio`` is read off the winner's :class:`BranchOutcome`
+        (populated by :meth:`_run_tests_for_branch`). When the runner is
+        disabled, the parent backend is not a :class:`LocalBackend`, or the
+        run timed out, the value is ``None`` — :func:`compute_confidence`
+        then applies its cap-at-0.65 safety rail, identical to the
+        no-test-signal behaviour.
         """
         quality_spread = 1.0 - report.summary.agreement_score
         winner = next((o for o in outcomes if o.branch_id == winner_id), None)
         if winner is None:
             internal_consistency = 0.0
+            test_pass_ratio: float | None = None
         else:
             denom = max(winner.turns, 1)
             raw = 1.0 - (winner.retry_count + winner.stuck_loop_hits) / denom
             internal_consistency = max(0.0, min(1.0, raw))
+            test_pass_ratio = winner.test_pass_ratio
         return ConfidenceSignals(
             quality_spread=quality_spread,
-            test_pass_ratio=None,
+            test_pass_ratio=test_pass_ratio,
             internal_consistency=internal_consistency,
         )
 
@@ -1000,7 +1119,7 @@ class ForkCoordinator:
             logger.debug("resolve: returning cached outcome (kind=%r)", effective_strategy.kind)
             return self._cached_outcome
 
-        outcomes, goal = self._build_branch_outcomes()
+        outcomes, goal = await self._build_branch_outcomes()
         diff_report = build_diff_report(self._handle.fork_id, list(self.branches.values()))
 
         verdict, judge_usage = await self._run_judges(

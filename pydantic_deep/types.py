@@ -505,6 +505,7 @@ class BranchOutcome:
     error_count: int
     retry_count: int
     stuck_loop_hits: int
+    test_pass_ratio: float | None = None
 
 
 @_dataclass(frozen=True)

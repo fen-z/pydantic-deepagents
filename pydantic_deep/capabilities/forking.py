@@ -34,6 +34,17 @@ class LiveForkCapability(AbstractCapability[Any]):
             fork-of-fork.
         store: Optional :class:`ForkStateStore`. Defaults to
             :class:`InMemoryForkStateStore`.
+        test_command: Optional shell command run against each branch's
+            materialised tree during :meth:`ForkCoordinator.resolve` to feed
+            the ``test_pass_ratio`` confidence signal. ``None`` leaves the
+            ratio at ``None`` for every branch — :func:`compute_confidence`
+            then keeps its cap-at-0.65 safety rail active, identical to
+            "no test signal". Only honoured when the parent backend is a
+            :class:`~pydantic_ai_backends.LocalBackend`.
+        test_timeout_s: Wall-clock cap (seconds) per branch test run. On
+            timeout the branch's ``test_pass_ratio`` is ``None`` (treated
+            as "no signal"), not ``0.0``. Independent of
+            ``branch_budget_usd`` — runner time is not LLM cost.
 
     The owning agent reference is set by ``create_deep_agent()`` after the
     Agent is constructed (mirrors how ``agent._task_manager`` is set today).
@@ -44,6 +55,8 @@ class LiveForkCapability(AbstractCapability[Any]):
     store: ForkStateStore | None = None
     #: Independent of apply-to-parent semantics — disk artefacts stay even on abandon.
     keep_artifacts: bool = False
+    test_command: str | None = None
+    test_timeout_s: float = 60.0
 
     _agent_ref: Any = field(default=None, init=False, repr=False)
     _latest_messages: list[ModelMessage] = field(default_factory=list, init=False, repr=False)
@@ -80,6 +93,8 @@ class LiveForkCapability(AbstractCapability[Any]):
             max_depth=self.max_depth,
             store=self.store,
             keep_artifacts=self.keep_artifacts,
+            test_command=self.test_command,
+            test_timeout_s=self.test_timeout_s,
         )
         # init=False fields are reset by replace(); restore the agent ref.
         clone._agent_ref = self._agent_ref
@@ -98,6 +113,8 @@ class LiveForkCapability(AbstractCapability[Any]):
             max_depth=clone.max_depth,
             store=clone.store,
             keep_artifacts=clone.keep_artifacts,
+            test_command=clone.test_command,
+            test_timeout_s=clone.test_timeout_s,
         )
         coordinator.capability = clone
         ctx.deps.fork_coordinator = coordinator

@@ -11,9 +11,66 @@ from pydantic_ai_backends import LocalBackend
 from apps.cli.prompts import build_cli_instructions
 from apps.cli.reminder import _build_reminder_config
 from pydantic_deep.agent import DEFAULT_INSTRUCTIONS, create_deep_agent
+from pydantic_deep.capabilities.forking import LiveForkCapability
 from pydantic_deep.capabilities.hooks import Hook, HookEvent, HookInput, HookResult
 from pydantic_deep.capabilities.message_queue import MessageQueue
 from pydantic_deep.deps import DeepAgentDeps
+
+
+def _detect_fork_test_command(backend: Any) -> str | None:
+    """Auto-detect a test command from the project root for the fork test runner.
+
+    Checks common test framework markers in ``backend.root_dir`` (only
+    :class:`~pydantic_ai_backends.LocalBackend` has a ``root_dir``).
+    Returns a ready-to-run shell string, or ``None`` when nothing is
+    detected — the fork runner stays disabled in that case and
+    ``auto_with_fallback`` falls through to the manual picker as before.
+
+    Priority order:
+    1. ``pyproject.toml`` / ``pytest.ini`` / ``setup.cfg`` → pytest
+    2. ``package.json`` with a ``test`` script → npm test
+    3. ``Makefile`` with a ``test:`` or ``test :`` target → make test
+    """
+    root_obj = getattr(backend, "root_dir", None)
+    if root_obj is None:
+        return None
+    root = Path(root_obj)
+
+    # pytest markers
+    pyproject = root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            content = pyproject.read_text(encoding="utf-8", errors="ignore")
+            if "[tool.pytest" in content or "[tool.pytest.ini_options]" in content:
+                return "uv run pytest -q --tb=short"
+        except OSError:
+            pass
+    if (root / "pytest.ini").exists() or (root / "setup.cfg").exists():
+        return "uv run pytest -q --tb=short"
+
+    # npm / yarn / pnpm
+    pkg = root / "package.json"
+    if pkg.exists():
+        try:
+            import json
+
+            data = json.loads(pkg.read_text(encoding="utf-8", errors="ignore"))
+            if isinstance(data.get("scripts"), dict) and "test" in data["scripts"]:
+                return "npm test"
+        except (OSError, ValueError):
+            pass
+
+    # Makefile with a test target
+    makefile = root / "Makefile"
+    if makefile.exists():
+        try:
+            for line in makefile.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.startswith("test:") or line.startswith("test "):
+                    return "make test"
+        except OSError:
+            pass
+
+    return None
 
 
 def _make_shell_allow_list_hook(allow_list: list[str]) -> Hook:
@@ -390,7 +447,9 @@ def create_cli_agent(  # noqa: C901
         # Self-improvement
         include_improve=True,
         # Live Run Forking — CLI surface (`/fork`, branch tabs, `/merge`) requires this on.
-        forking=True,
+        # test_command is auto-detected from project files (pyproject.toml, pytest.ini, …);
+        # it is intentionally NOT exposed in /fork-config so the user cannot override it.
+        forking=LiveForkCapability(test_command=_detect_fork_test_command(effective_backend)),
         # Web tools — explicit params override config
         web_search=(
             web_search if web_search is not None else (config.web_search if not lean else False)

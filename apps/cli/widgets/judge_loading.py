@@ -85,17 +85,19 @@ class JudgeLoadingScreen(ModalScreen["Any | Exception"]):
         strategy: MergeStrategy,
         *,
         passive: bool = False,
+        passive_label: str = "Agent evaluating branches…",
     ) -> None:
         super().__init__()
         self._coordinator = coordinator
         self._strategy = strategy
         self._passive = passive
+        self._passive_label = passive_label
         self._spinner = Spinner()
         self._judge_task: asyncio.Task[Any] | None = None
 
     def compose(self) -> ComposeResult:
         if self._passive:
-            label = "⚖ Agent evaluating branches…"
+            label = f"⚖ {self._passive_label}"
         else:
             label = "⚖ Judge evaluating…  [dim](esc to abort)[/dim]"
         with Vertical(id="judge-box"):
@@ -114,13 +116,16 @@ class JudgeLoadingScreen(ModalScreen["Any | Exception"]):
         elapsed = int(self._spinner.elapsed)
         label = self.query_one("#judge-label", Static)
         if self._passive:
-            label.update(f"{self._spinner.frame} Agent evaluating branches… {elapsed}s")
+            label.update(f"{self._spinner.frame} {self._passive_label} {elapsed}s")
         else:
             label.update(
                 f"{self._spinner.frame} Judge evaluating… {elapsed}s  [dim](esc to abort)[/dim]"
             )
 
     async def _run(self) -> None:
+        # Yield once so Textual can paint the screen before any blocking work
+        # (snapshot creation, test subprocess) starts.
+        await asyncio.sleep(0)
         try:
             outcome = await self._coordinator.resolve(self._strategy)
             self.dismiss(outcome)

@@ -710,12 +710,16 @@ class ChatScreen(Screen):
                                             team_event=(tool_name, args),
                                         )
 
-                                    # Only show overlay for action="auto" — pick/abort return fast
-                                    # and a flashing overlay there would be misleading.
-                                    if (
-                                        tool_name == "merge_or_select"
-                                        and args.get("action") == "auto"
-                                    ):
+                                    # Show overlay during merge_or_select so the user has feedback
+                                    # while the tool awaits the winner task and flushes overlays;
+                                    # ``abort`` returns fast enough that a flashing overlay is
+                                    # noise, so it's still excluded.
+                                    _mos_action = (
+                                        args.get("action", "")
+                                        if tool_name == "merge_or_select"
+                                        else ""
+                                    )
+                                    if _mos_action == "auto" or _mos_action.startswith("pick:"):
                                         _coord = None
                                         _active_fork = app.active_fork
                                         if _active_fork is not None:
@@ -731,10 +735,16 @@ class ChatScreen(Screen):
                                                 JudgeLoadingScreen,
                                             )
 
+                                            _passive_label = (
+                                                "Agent evaluating branches…"
+                                                if _mos_action == "auto"
+                                                else "Merging winner branch…"
+                                            )
                                             _overlay = JudgeLoadingScreen(
                                                 _coord,
                                                 _coord.handle.merge_strategy,
                                                 passive=True,
+                                                passive_label=_passive_label,
                                             )
                                             self._passive_judge_overlay = _overlay
                                             app.push_screen(_overlay)

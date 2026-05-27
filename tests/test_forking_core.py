@@ -2278,3 +2278,118 @@ async def test_after_run_is_passthrough():
     returned = await cap.after_run(_Ctx(deps), result=sentinel)
     assert returned is sentinel
     assert deps.fork_coordinator is before
+
+
+# ---------------------------------------------------------------------------
+# Coverage — merge_or_select tool: auto mode exception / verdict paths
+# ---------------------------------------------------------------------------
+
+
+async def test_merge_tool_action_auto_resolve_exception_returns_error_string():
+    """action='auto' where coordinator.resolve() raises → clean error string, no crash."""
+    from unittest.mock import AsyncMock, patch
+
+    deps = DeepAgentDeps(backend=StateBackend())
+    _build_capability_with_coordinator(deps)
+    toolset = create_fork_toolset()
+    fork_fn = toolset.tools["fork_run"].function
+    await fork_fn(
+        _StubCtx(deps),
+        [{"label": "a", "steer": "A"}],
+        None,
+        {"kind": "auto"},
+    )
+    assert deps.fork_coordinator is not None
+    coord = deps.fork_coordinator
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+    merge_fn = toolset.tools["merge_or_select"].function
+    with patch.object(coord, "resolve", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        out = await merge_fn(_StubCtx(deps), "auto")
+    assert "merge_or_select auto failed" in out
+    assert "boom" in out
+
+
+async def test_merge_tool_action_auto_committed_without_verdict():
+    """action='auto' committed=True but verdict=None → success string without judge_pick."""
+    from unittest.mock import AsyncMock, patch
+
+    from pydantic_deep import MergeResult
+    from pydantic_deep.types import ResolveOutcome
+
+    deps = DeepAgentDeps(backend=StateBackend())
+    _build_capability_with_coordinator(deps)
+    toolset = create_fork_toolset()
+    fork_fn = toolset.tools["fork_run"].function
+    await fork_fn(
+        _StubCtx(deps),
+        [{"label": "a", "steer": "A"}, {"label": "b", "steer": "B"}],
+        None,
+        {"kind": "auto"},
+    )
+    assert deps.fork_coordinator is not None
+    coord = deps.fork_coordinator
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+    winner_id = next(iter(coord.branches))
+
+    fake_merge_result = MergeResult(
+        fork_id=coord.fork_id or "fk-test",
+        winner_branch_id=winner_id,
+        discarded_branches=[],
+        history_after_merge=[],
+    )
+    # verdict=None — exercises the 290->295 branch (committed=True, no judge pick)
+    fake_outcome = ResolveOutcome(
+        committed=True,
+        auto_eligible=True,
+        verdict=None,
+        signals=None,
+        effective_confidence=0.0,
+        merge_result=fake_merge_result,
+    )
+    merge_fn = toolset.tools["merge_or_select"].function
+    with patch.object(coord, "resolve", new=AsyncMock(return_value=fake_outcome)):
+        out = await merge_fn(_StubCtx(deps), "auto")
+    # Should include the merge summary but NOT the judge_pick fragment.
+    assert "winner=" in out
+    assert "judge_pick=" not in out
+
+
+async def test_merge_tool_action_auto_not_committed_with_verdict_picks_winner():
+    """action='auto' where resolve() returns committed=False + verdict set → auto-picks winner."""
+    from unittest.mock import AsyncMock, patch
+
+    from pydantic_deep import JudgeVerdict
+    from pydantic_deep.types import ResolveOutcome
+
+    deps = DeepAgentDeps(backend=StateBackend())
+    _build_capability_with_coordinator(deps)
+    toolset = create_fork_toolset()
+    fork_fn = toolset.tools["fork_run"].function
+    await fork_fn(
+        _StubCtx(deps),
+        [{"label": "a", "steer": "A"}, {"label": "b", "steer": "B"}],
+        None,
+        {"kind": "auto"},
+    )
+    assert deps.fork_coordinator is not None
+    coord = deps.fork_coordinator
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+    winner_id = next(iter(coord.branches))
+
+    # verdict is not None but committed=False → line 304: action = f"pick:{winner_id}"
+    fake_verdict = JudgeVerdict(winner_branch_id=winner_id, reasoning="ok", confidence=0.7)
+    fake_outcome = ResolveOutcome(
+        committed=False,
+        auto_eligible=True,
+        verdict=fake_verdict,
+        signals=None,
+        effective_confidence=0.7,
+        merge_result=None,
+    )
+    merge_fn = toolset.tools["merge_or_select"].function
+    with patch.object(coord, "resolve", new=AsyncMock(return_value=fake_outcome)):
+        out = await merge_fn(_StubCtx(deps), "auto")
+    # The tool should have fallen through to merge_or_select(pick:<winner_id>)
+    assert "winner=" in out
+    assert coord.is_resolved
