@@ -66,6 +66,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+BranchRunnerFunc = Any
+
 _CANCEL_CLEANUP_TIMEOUT_S: float = 1.0
 
 #: Checked in order; first available env var wins the slot in the vote panel.
@@ -286,6 +288,7 @@ class BranchRuntime:
     partial_history: list[Any] = field(default_factory=list)
     pending_approval: PendingApprovalRequest | None = None
     blocked_commands: list[str] = field(default_factory=list)
+    extra_message_history: list[Any] = field(default_factory=list)
 
 
 class ForkCoordinator:
@@ -351,6 +354,7 @@ class ForkCoordinator:
         self.materializer: ForkMaterializer | None = None
         self._cached_outcome: ResolveOutcome | None = None
         self._cached_outcome_strategy_kind: str | None = None
+        self.branch_runner: BranchRunnerFunc | None = None
 
     @property
     def fork_id(self) -> str | None:
@@ -612,14 +616,19 @@ class ForkCoordinator:
         """
         from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 
-        result = await self.agent.run(
-            spec.steer,
-            message_history=list(parent_history),
-            deps=cloned_deps,
-        )
+        runtime = self.branches.get(branch_id)
+        runner = self.branch_runner
+        if runner is not None and runtime is not None:
+            result = await runner(
+                self.agent, spec.steer, list(parent_history), cloned_deps, None, runtime
+            )
+        else:
+            result = await self.agent.run(
+                spec.steer,
+                message_history=list(parent_history),
+                deps=cloned_deps,
+            )
         while isinstance(getattr(result, "output", None), DeferredToolRequests):
-            # Type widened to Any-value dict so Pyright accepts it as
-            # ``dict[str, DeferredToolApprovalResult | bool]`` (dict is invariant).
             approvals: dict[str, Any] = {}
             runtime = self.branches.get(branch_id)
             for call in result.output.approvals:
@@ -638,21 +647,105 @@ class ForkCoordinator:
                         runtime.blocked_commands.append(description)
                     approvals[call.tool_call_id] = approved
                 else:
-                    # No runtime → no path to user consent → deny (auto-approving
-                    # a gated tool would be a permissions hole).
                     logger.warning(
                         "branch %s has no runtime registered; denying deferred call %s",
                         branch_id,
                         description,
                     )
                     approvals[call.tool_call_id] = False
-            result = await self.agent.run(
-                None,
-                message_history=result.all_messages(),
-                deps=cloned_deps,
-                deferred_tool_results=DeferredToolResults(approvals=approvals),
-            )
+            if runner is not None and runtime is not None:  # pragma: no cover - deferred + runner
+                result = await runner(
+                    self.agent,
+                    None,
+                    result.all_messages(),
+                    cloned_deps,
+                    DeferredToolResults(approvals=approvals),
+                    runtime,
+                )
+            else:
+                result = await self.agent.run(
+                    None,
+                    message_history=result.all_messages(),
+                    deps=cloned_deps,
+                    deferred_tool_results=DeferredToolResults(approvals=approvals),
+                )
         return result
+
+    async def run_on_branch(self, branch_id: str, user_message: str) -> asyncio.Task[Any]:
+        """Start a new turn on a finished branch with ``user_message``.
+
+        The branch must be in ``done`` state. Builds the effective message
+        history from the previous run's result plus any accumulated
+        ``extra_message_history``, spawns a new ``asyncio.Task``, replaces
+        ``runtime.task``, and re-attaches the done-callback so the status
+        transitions back through ``running`` → ``done``.
+
+        Returns the spawned task so the caller can ``await`` it if needed.
+
+        Raises:
+            ValueError: If ``branch_id`` is unknown.
+            RuntimeError: If the branch is still running.
+        """
+        if branch_id not in self.branches:
+            raise ValueError(f"Unknown branch id: {branch_id!r}")
+
+        async with self._lock:
+            runtime = self.branches[branch_id]
+            if not runtime.task.done():
+                raise RuntimeError(
+                    f"Branch {branch_id!r} is still running — cannot start a new turn."
+                )
+            if runtime.status.state != "done":
+                raise RuntimeError(
+                    f"Branch {branch_id!r} is in state {runtime.status.state!r} — "
+                    "only 'done' branches accept new turns."
+                )
+            prev_result = runtime.task.result()
+            base_history = list(prev_result.all_messages())
+            effective_history = base_history + list(runtime.extra_message_history)
+
+            runtime.status.state = "running"
+            runtime.status.current_turn += 1
+            self._cached_outcome = None
+            self._cached_outcome_strategy_kind = None
+            self._refresh_manifest()
+
+            new_spec = BranchSpec(
+                label=runtime.spec.label,
+                steer=user_message,
+                model=runtime.spec.model,
+                budget_usd=runtime.spec.budget_usd,
+            )
+
+            task = asyncio.create_task(
+                self._run_branch_with_approval(branch_id, new_spec, effective_history, runtime.deps)
+            )
+            runtime.task = task
+
+            def _on_done(t: asyncio.Task[Any]) -> None:
+                try:
+                    if t.cancelled():  # pragma: no cover - cancellation race
+                        if runtime.status.state == "running":
+                            runtime.status.state = "terminated"
+                    elif t.exception() is not None:  # pragma: no cover - exception race
+                        runtime.status.state = "failed"
+                        runtime.status.error = str(t.exception())
+                    else:
+                        runtime.status.state = "done"
+                        result = t.result()
+                        new_messages = list(result.all_messages())
+                        tail = new_messages[len(effective_history) :]
+                        runtime.extra_message_history.extend(tail)
+                    self._refresh_manifest()
+                except Exception:  # pragma: no cover - defensive
+                    logger.warning(
+                        "run_on_branch %s done-callback failed",
+                        branch_id,
+                        exc_info=True,
+                    )
+
+            task.add_done_callback(_on_done)
+            return task
 
     async def terminate_branch(self, branch_id: str, *, reason: str | None = None) -> None:
         """Cancel a branch task and mark its terminal status.
@@ -753,7 +846,9 @@ class ForkCoordinator:
             winner = self.branches[target_id]
             try:
                 result = await winner.task
-                history_after_merge = list(result.all_messages())
+                history_after_merge = list(result.all_messages()) + list(
+                    winner.extra_message_history
+                )
             except asyncio.CancelledError:
                 _exhausted_states = {
                     "terminated",

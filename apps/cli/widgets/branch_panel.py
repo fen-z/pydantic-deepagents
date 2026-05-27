@@ -15,6 +15,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Static
 
@@ -102,6 +103,9 @@ class BranchPanelWidget(Vertical):
         self.label = label
         self.model = model  # display-only; the actual model in use for the branch
         self.can_focus = True
+        self._last_replayed_len: int = 0
+        self._rendered_call_ids: set[str] = set()
+        self.streaming: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static(self._render_header(), classes="branch-header")
@@ -153,6 +157,9 @@ class BranchPanelWidget(Vertical):
 
     def mark_status(self, state: BranchState, reason: str | None = None) -> None:
         """Update the branch's status badge and optional reason text."""
+        if state == "running":
+            self._last_replayed_len = 0
+            self._rendered_call_ids = set()
         self.reason = reason
         self.status = state
 
@@ -173,7 +180,7 @@ class BranchPanelWidget(Vertical):
 
         try:
             msg_list = self.query_one(MessageList)
-        except Exception:  # pragma: no cover - widget not yet mounted
+        except NoMatches:  # pragma: no cover - widget not yet mounted
             return
 
         msg_list.clear_messages()
@@ -220,6 +227,72 @@ class BranchPanelWidget(Vertical):
         if msg_list.current_assistant is not None:
             msg_list.current_assistant.finalize_text()
             msg_list.end_assistant_message()
+
+        self._last_replayed_len = len(messages)
+        self._rendered_call_ids = {
+            part.tool_call_id
+            for msg in messages
+            for part in getattr(msg, "parts", [])
+            if isinstance(part, ToolCallPart)
+        }
+
+    def replay_messages_append(self, messages: list[Any]) -> None:
+        """Append only new messages since the last replay — incremental update.
+
+        Called by the poll loop on each tick with the branch's current
+        ``partial_history``. Only processes messages from index
+        ``_last_replayed_len`` onward, avoiding a full clear + re-render.
+        """
+        from pydantic_ai.messages import (
+            TextPart,
+            ToolCallPart,
+            ToolReturnPart,
+            UserPromptPart,
+        )
+
+        if len(messages) <= self._last_replayed_len:
+            return
+
+        try:
+            msg_list = self.query_one(MessageList)
+        except NoMatches:  # pragma: no cover - widget not yet mounted
+            return
+
+        new_messages = messages[self._last_replayed_len :]
+        for msg in new_messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, UserPromptPart):
+                    content = part.content
+                    if isinstance(content, str) and content:
+                        msg_list.append_user_message(content)
+                elif isinstance(part, TextPart):
+                    if part.content:
+                        assistant_msg = msg_list.begin_assistant_message()
+                        assistant_msg.append_text(part.content)
+                        assistant_msg.finalize_text()
+                        msg_list.end_assistant_message()
+                elif isinstance(part, ToolCallPart):
+                    call_id = part.tool_call_id
+                    if call_id in self._rendered_call_ids:
+                        continue
+                    args = part.args_as_dict()
+                    assistant_msg = msg_list.current_assistant
+                    if assistant_msg is None:
+                        assistant_msg = msg_list.begin_assistant_message()
+                    assistant_msg.add_tool_call(part.tool_name, args, call_id)
+                    self._rendered_call_ids.add(call_id)
+                elif isinstance(part, ToolReturnPart):
+                    content_str = str(part.content)
+                    assistant_msg = msg_list.current_assistant
+                    if assistant_msg is not None:
+                        assistant_msg.complete_tool_call(
+                            part.tool_call_id,
+                            content_str,
+                            0.0,
+                            looks_like_error(content_str),
+                        )
+
+        self._last_replayed_len = len(messages)
 
     def set_active(self, active: bool) -> None:
         """Show or hide this panel — only one branch panel is visible at a time."""

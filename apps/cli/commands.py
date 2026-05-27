@@ -762,6 +762,8 @@ async def _dispatch_merge(app: DeepApp) -> None:
         runtime = active.coordinator.branches.get(branch_id)
         label = runtime.spec.label if runtime else branch_id
         steer = runtime.spec.steer if runtime else ""
+        if app.deps is not None:
+            app.deps.fork_coordinator = None
         app.active_fork = None
         _replay_branch_into_main_chat(app, patched[parent_len:], label, steer, result)
         app.notify(_format_merge_notification(label, result), severity="information")
@@ -883,6 +885,8 @@ async def _handle_judge_result(
         runtime = session.coordinator.branches.get(outcome.merge_result.winner_branch_id)
         label = runtime.spec.label if runtime else outcome.merge_result.winner_branch_id
         steer = runtime.spec.steer if runtime else ""
+        if app.deps is not None:
+            app.deps.fork_coordinator = None
         app.active_fork = None
         _replay_branch_into_main_chat(app, patched[parent_len:], label, steer, outcome.merge_result)
         app.notify(_format_auto_merge_notification(label, outcome), severity="information")

@@ -203,7 +203,10 @@ def _collect_state(root: Path, current: Path, out: dict[str, tuple[bool, float]]
                 mtime = 0.0
             out[rel] = (False, mtime)
         elif entry.is_dir(follow_symlinks=False):
+            child_count = len(out)
             _collect_state(root, p, out)
+            if len(out) == child_count:
+                out[rel + "/"] = (False, 0.0)
 
 
 def _capture_overlay_write(overlay: Any, abs_path: str, snap_file: Path) -> None:
@@ -262,9 +265,19 @@ def _propagate_mutations(
     """
     all_paths = set(pre) | set(post)
     for rel in all_paths:
-        abs_path = str(parent_root / rel)
         in_pre = rel in pre
         in_post = rel in post
+        is_dir = rel.endswith("/")
+
+        if is_dir:
+            dir_path = str(parent_root / rel.rstrip("/"))
+            if not in_pre and in_post:
+                overlay.record_mkdir(dir_path)
+            elif in_pre and not in_post:
+                overlay.record_rmdir(dir_path)
+            continue
+
+        abs_path = str(parent_root / rel)
         snap_file = snap / rel
 
         if in_pre and not in_post:
@@ -272,8 +285,6 @@ def _propagate_mutations(
             continue
 
         if not in_pre and in_post:
-            # Also covers ``mv`` of a parent symlink to a new path — the new path
-            # is a symlink whose target's bytes get captured via read_bytes.
             _capture_overlay_write(overlay, abs_path, snap_file)
             continue
 
@@ -286,7 +297,6 @@ def _propagate_mutations(
 
         if symlink_replaced_by_file or real_file_changed or symlink_target_changed:
             _capture_overlay_write(overlay, abs_path, snap_file)
-        # Unchanged symlink → no action needed.
 
 
 class BranchOverlay:
@@ -381,6 +391,17 @@ class BranchOverlay:
         self._changes.append(change)
         self._mirror_to_disk(change)
 
+    def record_mkdir(self, path: str) -> None:
+        """Record a directory creation detected by ``_propagate_mutations``."""
+        change = FileChange(path=path, op="mkdir", timestamp=datetime.now(timezone.utc))
+        self._changes.append(change)
+
+    def record_rmdir(self, path: str) -> None:
+        """Record a directory deletion detected by ``_propagate_mutations``."""
+        self._deleted.add(path)
+        change = FileChange(path=path, op="rmdir", timestamp=datetime.now(timezone.utc))
+        self._changes.append(change)
+
     def _has(self, path: str) -> bool:
         """Check whether a file lives in THIS overlay (not parent)."""
         return bool(self._overlay.exists(path))
@@ -391,15 +412,15 @@ class BranchOverlay:
         A branch "sees" any file present in either layer, mirroring the
         copy-on-write read semantics: written-by-this-branch files take
         precedence, otherwise the parent backend answers. Paths the
-        branch has deleted via :meth:`delete` are hidden regardless of
-        parent presence.
+        branch has deleted via :meth:`delete` — or that live inside a
+        deleted directory — are hidden regardless of parent presence.
         """
-        if path in self._deleted:
+        if self._is_deleted(path):
             return False
         return bool(self._overlay.exists(path) or self._parent.exists(path))
 
     def read(self, path: str, offset: int = 0, limit: int = 2000) -> str:
-        if path in self._deleted:
+        if self._is_deleted(path):
             raise FileNotFoundError(path)
         if self._has(path):
             result: str = self._overlay.read(path, offset, limit)
@@ -407,7 +428,7 @@ class BranchOverlay:
         return str(self._parent.read(path, offset, limit))
 
     def read_bytes(self, path: str) -> bytes:
-        if path in self._deleted:
+        if self._is_deleted(path):
             raise FileNotFoundError(path)
         if self._has(path):
             data: bytes = self._overlay.read_bytes(path)
@@ -415,8 +436,13 @@ class BranchOverlay:
         parent_data: bytes = self._parent.read_bytes(path)
         return parent_data
 
-    def write(self, path: str, content: str | bytes) -> WriteResult:
+    def _undelete(self, path: str) -> None:
+        """Remove ``path`` and any deleted-parent-directory entry covering it."""
         self._deleted.discard(path)
+        self._deleted -= {d for d in self._deleted if path.startswith(d.rstrip("/") + "/")}
+
+    def write(self, path: str, content: str | bytes) -> WriteResult:
+        self._undelete(path)
         self._snapshot_parent_on_first_touch(path)
         result = self._overlay.write(path, content)
         if not result.error:
@@ -432,7 +458,7 @@ class BranchOverlay:
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        self._deleted.discard(path)
+        self._undelete(path)
         self._snapshot_parent_on_first_touch(path)
         # If the file lives only in the parent, materialize it into the overlay
         # first so edits don't leak back to the parent.
@@ -461,14 +487,22 @@ class BranchOverlay:
             seen[entry["path"]] = entry
         return list(seen.values())
 
+    def _is_deleted(self, path: str) -> bool:
+        """Check if ``path`` or any of its parent directories has been deleted."""
+        if path in self._deleted:
+            return True
+        return any(path.startswith(d.rstrip("/") + "/") for d in self._deleted)
+
     def ls_info(self, path: str) -> list[FileInfo]:
-        return self._merge_entries(self._parent.ls_info(path), self._overlay.ls_info(path))
+        merged = self._merge_entries(self._parent.ls_info(path), self._overlay.ls_info(path))
+        return [e for e in merged if not self._is_deleted(e["path"])]
 
     def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
-        return self._merge_entries(
+        merged = self._merge_entries(
             self._parent.glob_info(pattern, path),
             self._overlay.glob_info(pattern, path),
         )
+        return [e for e in merged if not self._is_deleted(e["path"])]
 
     @property
     def execute_enabled(self) -> bool:  # pragma: no cover - transparent forward to parent
@@ -580,6 +614,8 @@ class BranchOverlay:
         branch_label = self._branch_label
         if materializer is None or branch_label is None:
             return
+        if change.op in ("mkdir", "rmdir"):  # pragma: no cover - no disk mirror for dirs
+            return
         if change.op == "delete":
             try:
                 materializer.flush_delete(branch_label, change)
@@ -602,7 +638,7 @@ class BranchOverlay:
                 exc_info=True,
             )
 
-    def flush_to(
+    def flush_to(  # noqa: C901
         self,
         parent: BackendProtocol,
         pre_flush_snapshot: dict[str, bytes | None] | None = None,
@@ -642,11 +678,21 @@ class BranchOverlay:
 
         for change in self._changes:
             if change.op == "delete":
-                # A delete supersedes any earlier write/edit for the same path.
                 if change.path in applied_set:
                     applied_set.discard(change.path)
                     applied_paths = [p for p in applied_paths if p != change.path]
                 if self._flush_delete(parent, change, errors, deleted_paths, deleted_set):
+                    applied_changes += 1
+                continue
+            if change.op == "mkdir":
+                if self._flush_mkdir(parent, change, errors):
+                    applied_changes += 1
+                    if change.path not in applied_set:  # pragma: no branch
+                        applied_set.add(change.path)
+                        applied_paths.append(change.path)
+                continue
+            if change.op == "rmdir":
+                if self._flush_rmdir(parent, change, errors, deleted_paths, deleted_set):
                     applied_changes += 1
                 continue
             content = self._overlay.read_bytes(change.path)
@@ -736,6 +782,87 @@ class BranchOverlay:
             errors.append(FlushError(path=change.path, op="delete", message=str(exc)))
             return False
         if change.path not in deleted_set:
+            deleted_set.add(change.path)
+            deleted_paths.append(change.path)
+        return True
+
+    @staticmethod
+    def _flush_mkdir(
+        parent: BackendProtocol,
+        change: FileChange,
+        errors: list[FlushError],
+    ) -> bool:
+        """Replay a ``mkdir`` op onto ``parent``; return ``True`` on success."""
+        try:
+            if getattr(parent, "execute_enabled", False):
+                import shlex
+
+                response = parent.execute(  # pyright: ignore[reportAttributeAccessIssue]
+                    f"mkdir -p {shlex.quote(change.path)}"
+                )
+                exit_code = getattr(response, "exit_code", 0)
+                if exit_code:
+                    errors.append(
+                        FlushError(
+                            path=change.path,
+                            op="mkdir",
+                            message=f"mkdir exited {exit_code}",
+                        )
+                    )
+                    return False
+            else:
+                errors.append(
+                    FlushError(
+                        path=change.path,
+                        op="mkdir",
+                        message="parent backend does not support execute",
+                    )
+                )
+                return False
+        except Exception as exc:  # pragma: no cover - defensive
+            errors.append(FlushError(path=change.path, op="mkdir", message=str(exc)))
+            return False
+        return True
+
+    @staticmethod
+    def _flush_rmdir(
+        parent: BackendProtocol,
+        change: FileChange,
+        errors: list[FlushError],
+        deleted_paths: list[str],
+        deleted_set: set[str],
+    ) -> bool:
+        """Replay an ``rmdir`` op onto ``parent``; return ``True`` on success."""
+        try:
+            if getattr(parent, "execute_enabled", False):
+                import shlex
+
+                response = parent.execute(  # pyright: ignore[reportAttributeAccessIssue]
+                    f"rm -rf {shlex.quote(change.path)}"
+                )
+                exit_code = getattr(response, "exit_code", 0)
+                if exit_code:
+                    errors.append(
+                        FlushError(
+                            path=change.path,
+                            op="rmdir",
+                            message=f"rm -rf exited {exit_code}",
+                        )
+                    )
+                    return False
+            else:
+                errors.append(
+                    FlushError(
+                        path=change.path,
+                        op="rmdir",
+                        message="parent backend does not support execute",
+                    )
+                )
+                return False
+        except Exception as exc:  # pragma: no cover - defensive
+            errors.append(FlushError(path=change.path, op="rmdir", message=str(exc)))
+            return False
+        if change.path not in deleted_set:  # pragma: no branch
             deleted_set.add(change.path)
             deleted_paths.append(change.path)
         return True

@@ -397,6 +397,32 @@ routes the message to branch `a`'s queue only. Branch `b` is unaffected. If the 
 
 While a fork is active, plain prompts and most slash commands are blocked with a notification. The allow-list is `/merge`, `/help`, `/cost`, `/tokens`, `/version`, `/quit`, `/copy`. Everything else would spawn a new `agent.run()` and silently overwrite `deps.fork_coordinator`.
 
+### Live branch streaming
+
+Branch panels update incrementally while their tasks run. Each poll tick (0.5 s) calls `replay_messages_append` with the branch's `partial_history`, rendering only the delta since the last tick — tool calls, tool returns, and assistant text appear as they land without clearing and re-rendering the entire panel.
+
+When a `branch_runner` is set on the coordinator (done automatically by the CLI's `enter_fork_view`), the branch task uses `agent.iter()` instead of `agent.run()`, streaming text deltas and tool events directly into the panel's `MessageList` token-by-token. The coordinator's existing `DeferredToolRequests` approval loop and budget watcher work identically with both paths.
+
+### Interactive branch chat
+
+When a branch tab is focused and the branch has finished (`done`), typing plain text (no `>>` / `/` / `!` prefix) routes the message to that branch via `run_on_branch`. The branch starts a new turn with the user's message appended to its accumulated history. Each branch maintains its own `extra_message_history` so multiple follow-up turns accumulate independently.
+
+```text
+> /fork
+[branch a finishes]
+# Focus branch A's tab, then type:
+> Can you also add error handling?
+# → A resumes with the follow-up; B is unaffected
+```
+
+`run_on_branch` is blocked while the branch is still running — the user gets a notification to wait or use `>>{label} <msg>` to steer instead. When `/merge` resolves the fork, the winner's `history_after_merge` includes all parent pre-fork messages plus every branch turn (initial + interactive follow-ups).
+
+Recursive forks from an interactive branch session are not supported — `max_depth` still gates, and `/fork` remains blocked while any fork is active.
+
+### Stash + adopt mechanics (run_on_branch)
+
+When a parent turn ends without `merge_or_select`, the coordinator is stashed on `deps.fork_coordinator` (see [Stash + adopt mechanics](#stash-adopt-mechanics)). The stashed coordinator hosts `run_on_branch` for interactive follow-ups — the user can continue chatting with individual branches across multiple parent turns. The materialiser stays alive while the coordinator is stashed, so on-disk artefacts under `.pydantic-deep/forks/{fork_id}/` persist between turns.
+
 ### Esc semantics
 
 - **On a branch tab:** confirms "terminate `{label}`?" then calls [`ForkCoordinator.terminate_branch`][pydantic_deep.toolsets.forking.coordinator.ForkCoordinator.terminate_branch]. The other branches keep running.
@@ -593,7 +619,7 @@ The judge runs via a freshly-constructed [`pydantic_ai.Agent`][pydantic_ai.Agent
 
 Stage 1 deliberately shipped the minimum kernel. The following are **not** supported until later stages:
 
-- **Live per-token streaming inside branch panels** — Stage 3 renders each branch's final messages once its `asyncio.Task` completes; mid-run streaming inside the panel would require reworking the coordinator's task spawn. Status badges (`●`/`✓`/`✗`/`⊘`/`$`/`$$`) update live via a 0.5 s poller.
+- ~~**Live per-token streaming inside branch panels**~~ — **Now supported.** Branch panels update incrementally via a 0.5 s polling loop (`replay_messages_append`) and optionally stream token-by-token via `agent.iter()` when the `branch_runner` is set (the CLI sets it automatically in `enter_fork_view`).
 - **Persistent fork state** — `InMemoryForkStateStore` is the only store across all stages; process restart loses fork state.
 - **Auto-merge of branch outputs into a single Pydantic blob** — intentionally excluded everywhere; "pick a winner" is the model.
 

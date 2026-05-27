@@ -278,6 +278,80 @@ def test_branch_overlay_delete_hides_from_reads():
         overlay.read_bytes("/x.py")
 
 
+def test_rmdir_hides_directory_from_ls_info():
+    """record_rmdir hides the directory and its children from ls_info."""
+    parent = StateBackend()
+    parent.write("/proj/jajo/file.txt", "content")
+    parent.write("/proj/keep/other.txt", "keep")
+    overlay = BranchOverlay(parent)
+
+    entries_before = {e["path"] for e in overlay.ls_info("/proj")}
+    assert any(p == "/proj/jajo" or p.startswith("/proj/jajo/") for p in entries_before)
+
+    overlay.record_rmdir("/proj/jajo")
+
+    entries_after = {e["path"] for e in overlay.ls_info("/proj")}
+    assert not any(p == "/proj/jajo" or p.startswith("/proj/jajo/") for p in entries_after)
+    assert any(p.startswith("/proj/keep") for p in entries_after)
+
+
+def test_write_inside_rmdir_directory_resurrects_file():
+    """Writing a file inside a record_rmdir-ed directory un-deletes it."""
+    parent = StateBackend()
+    parent.write("/proj/jajo/old.txt", "old")
+    overlay = BranchOverlay(parent)
+
+    overlay.record_rmdir("/proj/jajo")
+    assert overlay.exists("/proj/jajo/old.txt") is False
+
+    overlay.write("/proj/jajo/new.txt", "new content")
+    assert overlay.exists("/proj/jajo/new.txt") is True
+    assert overlay.read_bytes("/proj/jajo/new.txt") == b"new content"
+    # The old file is also visible again because the directory deletion was lifted.
+    assert overlay.exists("/proj/jajo/old.txt") is True
+
+
+def test_rmdir_hides_children_from_exists():
+    """record_rmdir makes children of the deleted directory invisible via exists."""
+    parent = StateBackend()
+    parent.write("/proj/jajo/file.txt", "content")
+    overlay = BranchOverlay(parent)
+
+    assert overlay.exists("/proj/jajo/file.txt") is True
+
+    overlay.record_rmdir("/proj/jajo")
+
+    assert overlay.exists("/proj/jajo/file.txt") is False
+
+
+def test_rmdir_hides_children_from_read():
+    """record_rmdir makes children unreadable."""
+    parent = StateBackend()
+    parent.write("/proj/jajo/file.txt", "content")
+    overlay = BranchOverlay(parent)
+
+    overlay.record_rmdir("/proj/jajo")
+
+    with pytest.raises(FileNotFoundError):
+        overlay.read("/proj/jajo/file.txt")
+    with pytest.raises(FileNotFoundError):
+        overlay.read_bytes("/proj/jajo/file.txt")
+
+
+def test_rmdir_hides_from_glob_info():
+    """record_rmdir hides directory entries from glob_info."""
+    parent = StateBackend()
+    parent.write("/proj/jajo/file.txt", "content")
+    parent.write("/proj/keep/other.txt", "keep")
+    overlay = BranchOverlay(parent)
+
+    overlay.record_rmdir("/proj/jajo")
+
+    entries = [e["path"] for e in overlay.glob_info("**/*", "/proj")]
+    assert not any("jajo" in p for p in entries)
+    assert any("keep" in p for p in entries)
+
+
 def test_branch_overlay_write_undeletes_path():
     parent = StateBackend()
     parent.write("/x.py", "v0")
@@ -1572,6 +1646,247 @@ def test_execute_mv_propagates_delete_and_create_to_overlay(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# Directory create/delete propagation via execute
+# ---------------------------------------------------------------------------
+
+
+def test_execute_mkdir_propagates_to_overlay(tmp_path: Path) -> None:
+    """mkdir via execute records a 'mkdir' FileChange in the overlay."""
+    from pydantic_ai_backends import LocalBackend
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+
+    parent = LocalBackend(root_dir=str(tmp_path))
+    overlay = BranchOverlay(parent)
+
+    new_dir = tmp_path / "subdir"
+    result = overlay.execute(f"mkdir -p {new_dir}")
+    assert result.exit_code == 0
+
+    mkdir_changes = [c for c in overlay.changes() if c.op == "mkdir"]
+    assert len(mkdir_changes) == 1
+    assert mkdir_changes[0].path == str(new_dir)
+
+
+def test_execute_rmdir_propagates_to_overlay(tmp_path: Path) -> None:
+    """rmdir via execute records a 'rmdir' FileChange in the overlay."""
+    from pydantic_ai_backends import LocalBackend
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+
+    target_dir = tmp_path / "existing"
+    target_dir.mkdir()
+    parent = LocalBackend(root_dir=str(tmp_path))
+    overlay = BranchOverlay(parent)
+
+    result = overlay.execute(f"rm -rf {target_dir}")
+    assert result.exit_code == 0
+
+    rmdir_changes = [c for c in overlay.changes() if c.op == "rmdir"]
+    assert len(rmdir_changes) == 1
+    assert rmdir_changes[0].path == str(target_dir)
+
+
+def test_flush_mkdir_creates_directory_on_parent(tmp_path: Path) -> None:
+    """flush_to with a mkdir change creates the directory on the parent backend."""
+    from pydantic_ai_backends import LocalBackend
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+
+    parent = LocalBackend(root_dir=str(tmp_path))
+    overlay = BranchOverlay(parent)
+
+    new_dir = tmp_path / "created_by_flush"
+    overlay.record_mkdir(str(new_dir))
+
+    report = overlay.flush_to(parent)
+    assert new_dir.is_dir()
+    assert str(new_dir) in report.applied_paths
+
+
+def test_flush_rmdir_removes_directory_on_parent(tmp_path: Path) -> None:
+    """flush_to with an rmdir change removes the directory on the parent backend."""
+    from pydantic_ai_backends import LocalBackend
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+
+    target_dir = tmp_path / "to_remove"
+    target_dir.mkdir()
+    assert target_dir.exists()
+
+    parent = LocalBackend(root_dir=str(tmp_path))
+    overlay = BranchOverlay(parent)
+
+    overlay.record_rmdir(str(target_dir))
+
+    report = overlay.flush_to(parent)
+    assert not target_dir.exists()
+    assert str(target_dir) in report.deleted_paths
+
+
+def test_flush_mkdir_no_execute_reports_error() -> None:
+    """flush_to mkdir on a backend without execute reports a FlushError."""
+    from pydantic_ai_backends import StateBackend
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+
+    parent = StateBackend()
+    overlay = BranchOverlay(parent)
+    overlay.record_mkdir("/fake/dir")
+
+    report = overlay.flush_to(parent)
+    assert len(report.errors) == 1
+    assert report.errors[0].op == "mkdir"
+
+
+def test_flush_rmdir_no_execute_reports_error() -> None:
+    """flush_to rmdir on a backend without execute reports a FlushError."""
+    from pydantic_ai_backends import StateBackend
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+
+    parent = StateBackend()
+    overlay = BranchOverlay(parent)
+    overlay.record_rmdir("/fake/dir")
+
+    report = overlay.flush_to(parent)
+    assert len(report.errors) == 1
+    assert report.errors[0].op == "rmdir"
+
+
+def test_collect_state_records_empty_directories(tmp_path: Path) -> None:
+    """_collect_state records empty directories as entries ending with '/'."""
+    from pydantic_deep.toolsets.forking.isolation import _collect_state
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+
+    state: dict[str, tuple[bool, float]] = {}
+    _collect_state(tmp_path, tmp_path, state)
+    assert "empty/" in state
+
+
+def test_flush_mkdir_nonzero_exit_reports_error(tmp_path: Path) -> None:
+    """flush_to mkdir that returns non-zero exit code reports FlushError."""
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+    from pydantic_deep.types import FileChange
+
+    parent = MagicMock()
+    parent.execute_enabled = True
+    response = MagicMock()
+    response.exit_code = 1
+    response.output = "permission denied"
+    parent.execute.return_value = response
+
+    change = FileChange(path="/fake/dir", op="mkdir", timestamp=datetime.now(timezone.utc))
+    errors: list[Any] = []
+    result = BranchOverlay._flush_mkdir(parent, change, errors)
+    assert result is False
+    assert len(errors) == 1
+    assert errors[0].op == "mkdir"
+
+
+def test_flush_rmdir_nonzero_exit_reports_error(tmp_path: Path) -> None:
+    """flush_to rmdir that returns non-zero exit code reports FlushError."""
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+
+    from pydantic_deep.toolsets.forking.isolation import BranchOverlay
+    from pydantic_deep.types import FileChange
+
+    parent = MagicMock()
+    parent.execute_enabled = True
+    response = MagicMock()
+    response.exit_code = 1
+    response.output = "permission denied"
+    parent.execute.return_value = response
+
+    change = FileChange(path="/fake/dir", op="rmdir", timestamp=datetime.now(timezone.utc))
+    errors: list[Any] = []
+    deleted_paths: list[str] = []
+    deleted_set: set[str] = set()
+    result = BranchOverlay._flush_rmdir(parent, change, errors, deleted_paths, deleted_set)
+    assert result is False
+    assert len(errors) == 1
+    assert errors[0].op == "rmdir"
+
+
+def test_propagate_mutations_handles_directory_create(tmp_path: Path) -> None:
+    """_propagate_mutations detects a new empty directory and calls record_mkdir."""
+    from unittest.mock import MagicMock
+
+    from pydantic_deep.toolsets.forking.isolation import _propagate_mutations
+
+    parent_root = tmp_path / "root"
+    parent_root.mkdir()
+    snap = tmp_path / "snap"
+    snap.mkdir()
+
+    pre: dict[str, tuple[bool, float]] = {}
+    post: dict[str, tuple[bool, float]] = {"newdir/": (False, 0.0)}
+
+    overlay = MagicMock()
+    _propagate_mutations(snap, parent_root, pre, post, overlay)
+    overlay.record_mkdir.assert_called_once_with(str(parent_root / "newdir"))
+
+
+def test_propagate_mutations_handles_directory_delete(tmp_path: Path) -> None:
+    """_propagate_mutations detects a removed directory and calls record_rmdir."""
+    from unittest.mock import MagicMock
+
+    from pydantic_deep.toolsets.forking.isolation import _propagate_mutations
+
+    parent_root = tmp_path / "root"
+    parent_root.mkdir()
+    snap = tmp_path / "snap"
+    snap.mkdir()
+
+    pre: dict[str, tuple[bool, float]] = {"olddir/": (False, 0.0)}
+    post: dict[str, tuple[bool, float]] = {}
+
+    overlay = MagicMock()
+    _propagate_mutations(snap, parent_root, pre, post, overlay)
+    overlay.record_rmdir.assert_called_once_with(str(parent_root / "olddir"))
+
+
+def test_propagate_mutations_unchanged_directory_is_noop(tmp_path: Path) -> None:
+    """_propagate_mutations skips directories present in both pre and post."""
+    from unittest.mock import MagicMock
+
+    from pydantic_deep.toolsets.forking.isolation import _propagate_mutations
+
+    parent_root = tmp_path / "root"
+    parent_root.mkdir()
+    snap = tmp_path / "snap"
+    snap.mkdir()
+
+    pre: dict[str, tuple[bool, float]] = {"stable/": (False, 0.0)}
+    post: dict[str, tuple[bool, float]] = {"stable/": (False, 0.0)}
+
+    overlay = MagicMock()
+    _propagate_mutations(snap, parent_root, pre, post, overlay)
+    overlay.record_mkdir.assert_not_called()
+    overlay.record_rmdir.assert_not_called()
+
+
+def test_collect_state_does_not_record_nonempty_directories(tmp_path: Path) -> None:
+    """_collect_state does NOT record directories that contain files."""
+    from pydantic_deep.toolsets.forking.isolation import _collect_state
+
+    nonempty = tmp_path / "has_file"
+    nonempty.mkdir()
+    (nonempty / "f.txt").write_text("content")
+
+    state: dict[str, tuple[bool, float]] = {}
+    _collect_state(tmp_path, tmp_path, state)
+    assert "has_file/" not in state
+    assert "has_file/f.txt" in state
+
+
+# ---------------------------------------------------------------------------
 # _symlink_tree — subdirectory recursion and _SNAP_SKIP_DIRS skip
 # ---------------------------------------------------------------------------
 
@@ -2278,6 +2593,188 @@ async def test_after_run_is_passthrough():
     returned = await cap.after_run(_Ctx(deps), result=sentinel)
     assert returned is sentinel
     assert deps.fork_coordinator is before
+
+
+# ---------------------------------------------------------------------------
+# B3 — Orphan stash lifecycle hardening
+# ---------------------------------------------------------------------------
+
+
+async def test_b3a_stash_preserves_coordinator_identity_and_handle():
+    """B3.a — unresolved coordinator survives ``for_run``; same id, handle non-None."""
+    cap = LiveForkCapability()
+    agent = _make_test_agent()
+    cap._agent_ref = agent
+    deps = DeepAgentDeps(backend=StateBackend())
+
+    class _Ctx:
+        def __init__(self, d: DeepAgentDeps) -> None:
+            self.deps = d
+
+    await cap.for_run(_Ctx(deps))
+    coord = deps.fork_coordinator
+    assert coord is not None
+
+    handle = await coord.fork(
+        [BranchSpec(label="a", steer="explore A")],
+        parent_history=_seed_history("parent turn"),
+    )
+    assert handle is not None
+    assert coord._handle is not None
+    assert coord.is_resolved is False
+    coord_id = id(coord)
+
+    await cap.for_run(_Ctx(deps))
+    assert deps.fork_coordinator is coord
+    assert id(deps.fork_coordinator) == coord_id
+    assert deps.fork_coordinator._handle is not None
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+
+async def test_b3b_non_fork_turn_preserves_stashed_coordinator():
+    """B3.b — a follow-up non-forking turn does not clear the stashed coordinator."""
+    cap = LiveForkCapability()
+    agent = _make_test_agent()
+    cap._agent_ref = agent
+    deps = DeepAgentDeps(backend=StateBackend())
+
+    class _Ctx:
+        def __init__(self, d: DeepAgentDeps) -> None:
+            self.deps = d
+
+    await cap.for_run(_Ctx(deps))
+    coord = deps.fork_coordinator
+    assert coord is not None
+
+    await coord.fork(
+        [BranchSpec(label="a", steer="A"), BranchSpec(label="b", steer="B")],
+        parent_history=_seed_history("initial"),
+    )
+    assert not coord.is_resolved
+    branch_ids = list(coord.branches.keys())
+    assert len(branch_ids) == 2
+
+    # Simulate a second parent turn — for_run should keep the same coordinator
+    await cap.for_run(_Ctx(deps))
+    assert deps.fork_coordinator is coord
+    assert list(deps.fork_coordinator.branches.keys()) == branch_ids
+    for bid in branch_ids:
+        assert deps.fork_coordinator.branches[bid].overlay is not None
+    assert deps.fork_coordinator.materializer is not None
+
+    # Third turn — still the same
+    await cap.for_run(_Ctx(deps))
+    assert deps.fork_coordinator is coord
+
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+
+# ---------------------------------------------------------------------------
+# E2 — Interactive multi-branch chat
+# ---------------------------------------------------------------------------
+
+
+async def test_e2_run_on_branch_starts_new_turn():
+    """E2.a — run_on_branch on a finished branch starts a new turn."""
+    deps = DeepAgentDeps(backend=StateBackend())
+    agent = _make_test_agent()
+    coord = _make_coordinator(agent, deps)
+    parent_history = _seed_history("parent prompt")
+    await coord.fork(
+        [BranchSpec(label="a", steer="first turn")],
+        parent_history=parent_history,
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+    branch_id = list(coord.branches.keys())[0]
+    rt = coord.branches[branch_id]
+    assert rt.status.state == "done"
+
+    task = await coord.run_on_branch(branch_id, "second turn")
+    await task
+    assert rt.status.state == "done"
+    assert rt.status.current_turn == 1
+
+
+async def test_e2_run_on_branch_rejects_running_branch():
+    """E2.d — run_on_branch on a still-running branch raises RuntimeError."""
+    deps = DeepAgentDeps(backend=StateBackend())
+    agent = _make_test_agent()
+
+    barrier = asyncio.Event()
+
+    async def _slow_run(*args: Any, **kwargs: Any) -> Any:
+        await barrier.wait()
+        return await agent.__class__.run(agent, *args, **kwargs)
+
+    agent.run = _slow_run  # type: ignore[method-assign]
+
+    coord = _make_coordinator(agent, deps)
+    await coord.fork(
+        [BranchSpec(label="a", steer="go")],
+        parent_history=_seed_history("parent"),
+    )
+    branch_id = list(coord.branches.keys())[0]
+
+    with pytest.raises(RuntimeError, match="still running"):
+        await coord.run_on_branch(branch_id, "should fail")
+
+    barrier.set()
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+
+async def test_e2_run_on_branch_rejects_failed_branch():
+    """run_on_branch on a failed (but task-done) branch raises RuntimeError."""
+    deps = DeepAgentDeps(backend=StateBackend())
+    agent = _make_test_agent()
+    coord = _make_coordinator(agent, deps)
+    await coord.fork(
+        [BranchSpec(label="a", steer="go")],
+        parent_history=_seed_history("parent"),
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+    branch_id = list(coord.branches.keys())[0]
+    rt = coord.branches[branch_id]
+    rt.status.state = "failed"
+
+    with pytest.raises(RuntimeError, match="only 'done' branches"):
+        await coord.run_on_branch(branch_id, "should fail")
+
+
+async def test_e2_run_on_branch_unknown_id_raises():
+    """run_on_branch with unknown branch_id raises ValueError."""
+    deps = DeepAgentDeps(backend=StateBackend())
+    agent = _make_test_agent()
+    coord = _make_coordinator(agent, deps)
+    await coord.fork(
+        [BranchSpec(label="a", steer="go")],
+        parent_history=_seed_history("parent"),
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+    with pytest.raises(ValueError, match="Unknown branch"):
+        await coord.run_on_branch("bogus-id", "hello")
+
+
+async def test_e2_merge_includes_extra_message_history():
+    """E2.b — merging a branch that ran extra turns includes accumulated history."""
+    deps = DeepAgentDeps(backend=StateBackend())
+    agent = _make_test_agent()
+    coord = _make_coordinator(agent, deps)
+    parent_history = _seed_history("parent seed")
+    await coord.fork(
+        [BranchSpec(label="a", steer="first"), BranchSpec(label="b", steer="other")],
+        parent_history=parent_history,
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+
+    branch_a = list(coord.branches.keys())[0]
+    task = await coord.run_on_branch(branch_a, "second turn on A")
+    await task
+
+    merge_result = await coord.merge_or_select(f"pick:{branch_a}")
+    assert len(merge_result.history_after_merge) >= 3  # parent + first + extra
 
 
 # ---------------------------------------------------------------------------

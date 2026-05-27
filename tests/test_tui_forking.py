@@ -119,6 +119,25 @@ async def _drain_tasks(session: CLIForkSession) -> None:
                 await asyncio.wait_for(asyncio.shield(runtime.task), timeout=1.0)
 
 
+def _capture_notifications(app: DeepApp) -> list[str]:
+    """Monkey-patch ``app.notify`` to capture messages into a returned list."""
+    captured: list[str] = []
+    original = app.notify
+
+    def _cap(
+        message: str,
+        *,
+        title: str = "",
+        severity: str = "information",
+        timeout: float = 5,
+    ) -> None:
+        captured.append(message)
+        original(message, title=title, severity=severity, timeout=timeout)
+
+    app.notify = _cap  # type: ignore[method-assign]
+    return captured
+
+
 class TestForkPickerAndPanels:
     """Test 1 — /fork modal collects two branches, app.active_fork set, 2 BranchPanelWidgets."""
 
@@ -1349,6 +1368,36 @@ class TestReconcileActiveFork:
             assert fork_app.active_fork is None
 
 
+class TestOrphanStashMultiTurn:
+    """B3.d — stashed coordinator survives subsequent non-fork parent turns in the TUI."""
+
+    async def test_active_fork_survives_second_non_fork_turn(self, fork_app: DeepApp) -> None:
+        """Second parent turn keeps ``app.active_fork`` at the same session."""
+        from apps.cli.forking import reconcile_active_fork
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app, slow=True)
+            assert fork_app.active_fork is session
+
+            # reconcile_active_fork on an unresolved fork with active_fork set returns False (no-op)
+            mutated = reconcile_active_fork(fork_app)
+            assert mutated is False
+            assert fork_app.active_fork is session
+
+            # Simulate a second reconcile (e.g. another parent turn ending)
+            mutated2 = reconcile_active_fork(fork_app)
+            assert mutated2 is False
+            assert fork_app.active_fork is session
+            assert fork_app.active_fork.coordinator is session.coordinator
+
+            # Unblock the slow branches so they complete
+            barrier = getattr(fork_app, "_fork_test_barrier", None)
+            if barrier is not None:
+                barrier.set()
+            await _drain_tasks(session)
+
+
 class TestForkCommandBlockedWhenAdopted:
     """B2 — ``/fork`` shows the adopted-specific notification when active_fork.adopted."""
 
@@ -1420,3 +1469,254 @@ class TestForkCommandBlockedWhenAdopted:
                 notifications
             )
             await _drain_tasks(session)
+
+
+class TestIncrementalReplay:
+    """E1B — replay_messages_append renders only the delta between poll ticks."""
+
+    async def test_e1b_a_append_renders_only_delta(self, fork_app: DeepApp) -> None:
+        """E1B.a — new TextPart between ticks → panel renders only the delta."""
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await pilot.pause()
+
+            panel = list(fork_app.screen.query(BranchPanelWidget))[0]
+            panel._last_replayed_len = 0
+
+            msg1 = [ModelResponse(parts=[TextPart(content="hello")])]
+            panel.replay_messages_append(msg1)
+            assert panel._last_replayed_len == 1
+
+            msg2 = msg1 + [ModelResponse(parts=[TextPart(content="world")])]
+            panel.replay_messages_append(msg2)
+            assert panel._last_replayed_len == 2
+            await _drain_tasks(session)
+
+    async def test_e1b_b_tool_call_then_return_updates_in_place(self, fork_app: DeepApp) -> None:
+        """E1B.b — ToolCallPart in tick N, ToolReturnPart in tick N+1."""
+        from pydantic_ai.messages import (
+            ModelRequest,
+            ModelResponse,
+            ToolCallPart,
+            ToolReturnPart,
+        )
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await pilot.pause()
+
+            panel = list(fork_app.screen.query(BranchPanelWidget))[0]
+            panel._last_replayed_len = 0
+            panel._rendered_call_ids = set()
+
+            tick1 = [
+                ModelResponse(parts=[ToolCallPart(tool_name="ls", args="{}", tool_call_id="c1")])
+            ]
+            panel.replay_messages_append(tick1)
+            assert "c1" in panel._rendered_call_ids
+
+            tick2 = tick1 + [
+                ModelRequest(
+                    parts=[ToolReturnPart(tool_name="ls", content="file.txt", tool_call_id="c1")]
+                )
+            ]
+            panel.replay_messages_append(tick2)
+            assert panel._last_replayed_len == 2
+            await _drain_tasks(session)
+
+    async def test_e1b_c_full_replay_on_done_is_consistent(self, fork_app: DeepApp) -> None:
+        """E1B.c — on task done, full replay_messages runs and panel is consistent."""
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await pilot.pause()
+
+            panel = list(fork_app.screen.query(BranchPanelWidget))[0]
+            panel._last_replayed_len = 0
+
+            msgs = [
+                ModelResponse(parts=[TextPart(content="partial")]),
+                ModelResponse(parts=[TextPart(content="more")]),
+            ]
+            panel.replay_messages_append(msgs[:1])
+            assert panel._last_replayed_len == 1
+
+            panel.replay_messages(msgs)
+            assert panel._last_replayed_len == 2
+            await _drain_tasks(session)
+
+    async def test_e1b_d_multiple_new_messages_in_one_tick(self, fork_app: DeepApp) -> None:
+        """E1B.d — history grew by >1 message between polls → all rendered."""
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await pilot.pause()
+
+            panel = list(fork_app.screen.query(BranchPanelWidget))[0]
+            panel._last_replayed_len = 0
+
+            msgs = [
+                ModelResponse(parts=[TextPart(content="a")]),
+                ModelResponse(parts=[TextPart(content="b")]),
+                ModelResponse(parts=[TextPart(content="c")]),
+            ]
+            panel.replay_messages_append(msgs)
+            assert panel._last_replayed_len == 3
+            await _drain_tasks(session)
+
+
+class TestBranchStreamRunner:
+    """E1A — branch_runner wired via enter_fork_view routes agent.iter() into panels."""
+
+    async def test_e1a_a_branch_runner_set_on_coordinator(self, fork_app: DeepApp) -> None:
+        """E1A.a — after enter_fork_view, coordinator.branch_runner is set."""
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await pilot.pause()
+            assert session.coordinator.branch_runner is not None
+            await _drain_tasks(session)
+
+    async def test_e1a_b_panels_have_runtime_panel_ref(self, fork_app: DeepApp) -> None:
+        """E1A.b — each runtime has a _panel reference pointing to the mounted BranchPanelWidget."""
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await pilot.pause()
+            for branch_id in session.handle.branches:
+                runtime = session.coordinator.branches[branch_id]
+                panel_ref = getattr(runtime, "_panel", None)
+                assert panel_ref is not None
+                assert isinstance(panel_ref, BranchPanelWidget)
+                assert panel_ref.branch_id == branch_id
+            await _drain_tasks(session)
+
+    async def test_e1a_c_branch_runner_streams_into_panel(self, fork_app: DeepApp) -> None:
+        """E1A.c — branch tasks use branch_runner via iter and produce output in panels."""
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await _drain_tasks(session)
+            await pilot.pause()
+
+            for branch_id in session.handle.branches:
+                runtime = session.coordinator.branches[branch_id]
+                assert runtime.task.done()
+                assert runtime.status.state == "done"
+
+    async def test_e1a_d_coordinator_without_runner_uses_agent_run(self) -> None:
+        """E1A.d — coordinator without branch_runner uses agent.run() (default path)."""
+        from pydantic_ai_backends import StateBackend
+
+        from pydantic_deep import DeepAgentDeps
+        from pydantic_deep.toolsets.forking.coordinator import ForkCoordinator
+        from pydantic_deep.toolsets.forking.store import InMemoryForkStateStore
+        from pydantic_deep.types import BranchSpec
+
+        agent = _make_fork_agent()
+        deps = DeepAgentDeps(backend=StateBackend())
+        coord = ForkCoordinator(
+            agent=agent,
+            parent_deps=deps,
+            max_branches=2,
+            max_depth=1,
+            store=InMemoryForkStateStore(),
+        )
+        assert coord.branch_runner is None
+        handle = await coord.fork(
+            [BranchSpec(label="x", steer="go")],
+            parent_history=[ModelRequest(parts=[UserPromptPart(content="seed")])],
+        )
+        assert len(handle.branches) == 1
+        await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+        for rt in coord.branches.values():
+            assert rt.task.done()
+            assert rt.status.state == "done"
+            result = rt.task.result()
+            assert result is not None
+
+
+class TestInteractiveBranchChat:
+    """E2 — interactive multi-branch chat input routing."""
+
+    async def test_e2_c_plain_text_on_overview_during_fork_is_blocked(
+        self, fork_app: DeepApp
+    ) -> None:
+        """E2.c — plain text on the overview tab during an active fork → notification."""
+        from apps.cli.messages import UserSubmitted
+
+        notifications = _capture_notifications(fork_app)
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await _drain_tasks(session)
+            await pilot.pause()
+
+            fork_app.screen.post_message(UserSubmitted("hello there"))
+            await pilot.pause()
+            await pilot.pause()
+            assert any("fork active" in n.lower() for n in notifications), notifications
+            await _drain_tasks(session)
+
+    async def test_e2_d_plain_text_on_running_branch_is_blocked(self, fork_app: DeepApp) -> None:
+        """E2.d — plain text on a still-running branch → notification (cannot interact)."""
+        from apps.cli.messages import UserSubmitted
+
+        notifications = _capture_notifications(fork_app)
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app, slow=True)
+            await pilot.pause()
+
+            first_bid = session.handle.branches[0]
+            chat_screen = fork_app.screen
+            if isinstance(chat_screen, ChatScreen):
+                tabs = chat_screen.query_one(ForkTabsWidget)
+                tabs.active_id = first_bid
+                chat_screen.focus_branch_tab(first_bid)
+
+            fork_app.screen.post_message(UserSubmitted("try interact"))
+            await pilot.pause()
+            await pilot.pause()
+            assert any("still running" in n.lower() for n in notifications), notifications
+
+            barrier = getattr(fork_app, "_fork_test_barrier", None)
+            if barrier is not None:
+                barrier.set()
+            await _drain_tasks(session)
+
+    async def test_e2_e_slash_fork_blocked_during_interactive_chat(self, fork_app: DeepApp) -> None:
+        """E2.e — /fork typed during an interactive branch chat → blocked."""
+        from apps.cli.messages import UserSubmitted
+
+        notifications = _capture_notifications(fork_app)
+
+        async with fork_app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            session = await _start_fork(fork_app)
+            await _drain_tasks(session)
+            await pilot.pause()
+
+            first_bid = session.handle.branches[0]
+            chat_screen = fork_app.screen
+            if isinstance(chat_screen, ChatScreen):
+                tabs = chat_screen.query_one(ForkTabsWidget)
+                tabs.active_id = first_bid
+                chat_screen.focus_branch_tab(first_bid)
+
+            fork_app.screen.post_message(UserSubmitted("/fork"))
+            await pilot.pause()
+            await pilot.pause()
+            assert any(
+                "blocked" in n.lower() or "fork already" in n.lower() for n in notifications
+            ), notifications

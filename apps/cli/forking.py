@@ -137,13 +137,28 @@ class CLIForkSession:
         await queue.steer(msg)
         return True
 
+    async def run_on_branch(self, branch_id: str, user_message: str) -> Any:
+        """Start a new interactive turn on a finished branch.
+
+        Delegates to :meth:`ForkCoordinator.run_on_branch` and returns
+        the spawned ``asyncio.Task``.
+        """
+        return await self.coordinator.run_on_branch(branch_id, user_message)
+
     async def terminate_branch(self, branch_id: str) -> None:
         """Cancel one branch's task; the branch's status becomes ``terminated``."""
         await self.coordinator.terminate_branch(branch_id)
 
     async def abort(self) -> None:
-        """Cancel every running branch task — used by the overview's Esc-abort flow."""
-        await self.coordinator.aclose()
+        """Cancel every running branch task and release overlays.
+
+        Uses :meth:`ForkCoordinator.abort_fork` (not ``aclose``) so that
+        overlays are released and :attr:`is_resolved` becomes ``True``.
+        Also detaches the coordinator from parent deps so
+        :func:`reconcile_active_fork` does not re-adopt it on the next turn.
+        """
+        await self.coordinator.abort_fork()
+        self.coordinator.parent_deps.fork_coordinator = None
 
     async def merge(self, branch_id: str) -> MergeResult:
         """Resolve the fork by picking ``branch_id`` as the winner.

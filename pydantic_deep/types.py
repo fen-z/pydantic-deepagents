@@ -274,7 +274,7 @@ class FlushError:
     """
 
     path: str
-    op: Literal["write", "edit", "delete"]
+    op: Literal["write", "edit", "delete", "mkdir", "rmdir"]
     message: str
 
 
@@ -353,7 +353,7 @@ class FileChange:
     """
 
     path: str
-    op: Literal["write", "edit", "delete"]
+    op: Literal["write", "edit", "delete", "mkdir", "rmdir"]
     timestamp: datetime
 
 

@@ -50,6 +50,128 @@ from pydantic_deep.types import PendingApprovalRequest
 _FORK_POLL_INTERVAL_S: float = 0.5
 
 
+async def _stream_branch_via_iter(  # noqa: C901
+    agent: Any,
+    prompt: str | None,
+    message_history: list[Any],
+    deps: Any,
+    deferred_tool_results: Any,
+    runtime: Any,
+) -> Any:
+    """Branch runner that streams via ``agent.iter()`` into a :class:`BranchPanelWidget`.
+
+    Used as the ``branch_runner`` callback on :class:`ForkCoordinator`.
+    Routes text deltas and tool-call events into the branch panel's
+    :class:`MessageList` so the user sees live output while the branch runs.
+    Falls back to ``agent.run()`` when no panel is available.
+    """
+    from pydantic_ai import Agent as _Agent
+    from pydantic_ai._agent_graph import End, UserPromptNode  # type: ignore[attr-defined]
+    from pydantic_ai.messages import (
+        FinalResultEvent,
+        FunctionToolCallEvent,
+        FunctionToolResultEvent,
+        PartDeltaEvent,
+        TextPartDelta,
+    )
+
+    panel: BranchPanelWidget | None = getattr(runtime, "_panel", None)
+    if panel is None:
+        kwargs: dict[str, Any] = {
+            "message_history": message_history,
+            "deps": deps,
+        }
+        if deferred_tool_results is not None:
+            kwargs["deferred_tool_results"] = deferred_tool_results
+        return await agent.run(prompt, **kwargs)
+
+    try:
+        msg_list = panel.query_one(MessageList)
+    except Exception:  # pragma: no cover
+        kwargs = {"message_history": message_history, "deps": deps}
+        if deferred_tool_results is not None:
+            kwargs["deferred_tool_results"] = deferred_tool_results
+        return await agent.run(prompt, **kwargs)
+
+    iter_kwargs: dict[str, Any] = {
+        "deps": deps,
+        "message_history": message_history,
+        "usage_limits": DEFAULT_USAGE_LIMITS,
+    }
+    if deferred_tool_results is not None:
+        iter_kwargs["deferred_tool_results"] = deferred_tool_results
+
+    panel.streaming = True
+    try:
+        if prompt is not None:
+            msg_list.append_user_message(prompt)
+            msg_list.scroll_end(animate=False)
+
+        assistant: Any = None
+
+        def _ensure_assistant() -> Any:
+            nonlocal assistant
+            if assistant is None:
+                assistant = msg_list.begin_assistant_message()
+            return assistant
+
+        async with agent.iter(prompt, **iter_kwargs) as run:
+            async for node in run:
+                if isinstance(node, UserPromptNode):
+                    continue
+                elif _Agent.is_model_request_node(node):
+                    a = _ensure_assistant()
+                    async with node.stream(run.ctx) as stream:
+                        final_found = False
+                        async for event in stream:
+                            if isinstance(event, PartDeltaEvent):
+                                if isinstance(event.delta, TextPartDelta):
+                                    delta = event.delta.content_delta
+                                    if delta:
+                                        a.append_text(delta)
+                                        msg_list.scroll_end(animate=False)
+                            elif isinstance(event, FinalResultEvent):
+                                final_found = True
+                                break
+                        if final_found:
+                            prev_len = 0
+                            async for cumulative in stream.stream_text():
+                                if len(cumulative) > prev_len:
+                                    delta = cumulative[prev_len:]
+                                    a.append_text(delta)
+                                    prev_len = len(cumulative)
+                                    msg_list.scroll_end(animate=False)
+                elif _Agent.is_call_tools_node(node):
+                    a = _ensure_assistant()
+                    async with node.stream(run.ctx) as handle_stream:
+                        async for event in handle_stream:
+                            if isinstance(event, FunctionToolCallEvent):
+                                tool_name = event.part.tool_name
+                                args = event.part.args if isinstance(event.part.args, dict) else {}
+                                call_id = getattr(event.part, "tool_call_id", tool_name)
+                                a.add_tool_call(tool_name, args, call_id)
+                                msg_list.scroll_end(animate=False)
+                            elif isinstance(event, FunctionToolResultEvent):
+                                call_id = getattr(event.result, "tool_call_id", "unknown")
+                                raw = str(event.result.content)
+                                from apps.cli.text_heuristics import (
+                                    looks_like_error as _looks_err,
+                                )
+
+                                a.complete_tool_call(call_id, raw, 0.0, _looks_err(raw))
+                elif isinstance(node, End):
+                    pass
+
+            result = run.result
+
+        if assistant is not None:
+            assistant.finalize_text()
+            msg_list.end_assistant_message()
+        return result
+    finally:
+        panel.streaming = False
+
+
 class ChatScreen(Screen):
     """The main chat interface with header, messages, status bar, and input."""
 
@@ -468,6 +590,25 @@ class ChatScreen(Screen):
                 return
 
             if not text.startswith("!"):
+                focused_branch = self._focused_branch_id()
+                if focused_branch is not None:
+                    state = active_fork.branch_state(focused_branch)
+                    if state == "done":
+                        try:
+                            await active_fork.run_on_branch(focused_branch, text)
+                        except (ValueError, RuntimeError) as exc:
+                            app.notify(str(exc), severity="error")
+                            return
+                        self._poll_fork_state()
+                        return
+                    if state == "running":
+                        app.notify(
+                            "branch is still running — wait for it to finish "
+                            "or use `>>{label} <msg>` to steer.",
+                            severity="warning",
+                        )
+                        return
+
                 app.notify(
                     "fork active — use `>>{label} <msg>` to steer a branch, "
                     "or `/merge` to resolve.",
@@ -1262,6 +1403,7 @@ class ChatScreen(Screen):
         overview.set_active(True)
 
         coordinator = session.coordinator
+        coordinator.branch_runner = _stream_branch_via_iter
         parent_model = getattr(self.app, "model_name", None) or None
         branch_models: dict[str, str] = {}
         for branch_id in session.handle.branches:
@@ -1274,6 +1416,7 @@ class ChatScreen(Screen):
                 label=runtime.spec.label,
                 model=effective_model,
             )
+            runtime._panel = panel  # type: ignore[attr-defined]
             body.mount(panel)
             self._attach_branch_done_callback(panel, runtime)
         with contextlib.suppress(NoMatches):
@@ -1430,6 +1573,24 @@ class ChatScreen(Screen):
             if runtime is not None:
                 panel.blocked_count = len(runtime.blocked_commands)
                 panel.awaiting_approval = panel.branch_id in pending_by_bid
+                coord_state = runtime.status.state
+                if panel.status != coord_state:
+                    panel.mark_status(
+                        coord_state,
+                        reason=getattr(runtime.status, "error", None),
+                    )
+                    if coord_state == "done" and runtime.task.done():
+                        try:
+                            result = runtime.task.result()
+                        except Exception:
+                            panel.mark_status("failed")
+                        else:
+                            with contextlib.suppress(Exception):
+                                panel.replay_messages(list(result.all_messages()))
+                if not panel.streaming:
+                    with contextlib.suppress(Exception):
+                        if runtime.partial_history:
+                            panel.replay_messages_append(runtime.partial_history)
 
         # _approval_in_flight prevents stacking modals across poll ticks.
         if not self._approval_in_flight and pending:
@@ -1453,6 +1614,24 @@ class ChatScreen(Screen):
                 BranchApprovalModal(branch_label, request.description),
                 _on_decision,
             )
+
+    def _focused_branch_id(self) -> str | None:
+        """Return the branch id of the focused tab, or ``None`` if overview is focused."""
+        try:
+            tabs = self.query_one(ForkTabsWidget)
+        except NoMatches:
+            return None
+        active = tabs.active_id
+        if active == OVERVIEW_TAB_ID:
+            return None
+        return active
+
+    def _panel_for_branch(self, branch_id: str) -> BranchPanelWidget | None:
+        """Return the :class:`BranchPanelWidget` for ``branch_id``, or ``None``."""
+        for panel in self.query(BranchPanelWidget):
+            if panel.branch_id == branch_id:
+                return panel
+        return None
 
     def focus_branch_tab(self, branch_id: str) -> None:
         """Show one branch panel and hide the others (or show overview if ``OVERVIEW_TAB_ID``)."""
@@ -1525,6 +1704,8 @@ class ChatScreen(Screen):
 
         app.message_history = patch_tool_calls_processor(list(result.history_after_merge))
         label = runtime.spec.label
+        if app.deps is not None:
+            app.deps.fork_coordinator = None
         app.active_fork = None
         app.notify(f"Merged: kept branch {label}", severity="information")
 
