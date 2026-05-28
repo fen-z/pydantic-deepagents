@@ -111,6 +111,7 @@ from pydantic_deep.capabilities.hooks import (
     HookInput,
     HookResult,
     HooksCapability,
+    default_security_hook,
 )
 from pydantic_deep.deps import DEFAULT_USAGE_LIMITS as DEFAULT_USAGE_LIMITS
 from pydantic_deep.deps import DeepAgentDeps
@@ -344,6 +345,7 @@ __all__ = [
     "HookResult",
     "EXIT_ALLOW",
     "EXIT_DENY",
+    "default_security_hook",
     # Checkpointing
     "Checkpoint",
     "CheckpointStore",

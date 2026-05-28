@@ -26,10 +26,11 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai_backends import SandboxProtocol
 
@@ -447,7 +448,244 @@ class HooksCapability(AbstractCapability[Any]):
         return response
 
 
+# Default destructive-command patterns matched against the ``command`` arg of
+# the ``execute`` tool. Each entry is a regex; the first match denies the call.
+DEFAULT_BLOCKED_COMMANDS: tuple[str, ...] = (
+    # ``rm -rf /`` and variants like ``rm -rfv /``, ``rm -fr /``
+    r"\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*\s+/(?:\s|$)",
+    r"\brm\s+-[a-zA-Z]*[fF][a-zA-Z]*[rR][a-zA-Z]*\s+/(?:\s|$)",
+    # Classic fork bomb
+    r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:",
+    # Filesystem nuke
+    r"\bmkfs(?:\.\w+)?\b",
+    # Block-device clobber via dd
+    r"\bdd\s+[^\n;|&]*\bof=/dev/",
+    # curl/wget piped into a shell
+    r"\b(?:curl|wget)\s+[^\n;|&]*\|\s*(?:sh|bash|zsh|ksh|dash)\b",
+)
+
+
+# Default sensitive-path patterns matched against the ``path`` arg of
+# ``read_file``. Each entry is a regex anchored loosely so the same rule fires
+# whether the agent passes ``/etc/shadow``, ``./.ssh/id_rsa`` or ``~/.aws/...``.
+DEFAULT_BLOCKED_READ_PATHS: tuple[str, ...] = (
+    r"(?:^|/)etc/shadow\b",
+    r"(?:^|/|~/)\.ssh(?:/|$)",
+    r"(?:^|/)\.env(?:\.[\w.-]+)?$",
+    r"(?:^|/|~/)\.aws/credentials\b",
+    r"(?:^|/|~/)\.config/gcloud(?:/|$)",
+    r"application_default_credentials\.json$",
+)
+
+
+# Secret-shaped tokens redacted from POST_TOOL_USE output. Each pattern is
+# replaced with ``[REDACTED]`` when ``redact_secrets`` is enabled.
+DEFAULT_SECRET_PATTERNS: tuple[str, ...] = (
+    r"AKIA[0-9A-Z]{16}",  # AWS access key ID
+    r"sk-[A-Za-z0-9]{20,}",  # OpenAI-style API keys
+    r"ghp_[A-Za-z0-9]{36}",  # GitHub personal access token (classic)
+    r"github_pat_[A-Za-z0-9_]{22,}",  # GitHub fine-grained PAT
+    # JWT-shaped tokens (header.payload.signature, base64url segments)
+    r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+)
+
+
+# Tools whose ``path`` argument must stay inside ``allowed_write_roots``.
+_WRITE_TOOLS: tuple[str, ...] = ("write_file", "edit_file")
+
+
+def _normalize_path(raw: str) -> str:
+    """Expand ``~`` and resolve a path without requiring it to exist."""
+    return str(Path(raw).expanduser().resolve(strict=False))
+
+
+def _path_escapes_roots(path: str, roots: Sequence[str]) -> bool:
+    """Return True if ``path`` is not inside any of ``roots``."""
+    resolved = _normalize_path(path)
+    for root in roots:
+        root_resolved = _normalize_path(root)
+        try:
+            Path(resolved).relative_to(root_resolved)
+        except ValueError:
+            continue
+        return False
+    return True
+
+
+def _make_decision(
+    *,
+    mode: Literal["deny", "warn"],
+    tool_name: str,
+    reason: str,
+) -> HookResult:
+    """Build a HookResult honoring the configured ``mode``."""
+    if mode == "warn":
+        logger.warning("[security-hook] %s: %s", tool_name, reason)
+        return HookResult(allow=True, reason=reason)
+    return HookResult(allow=False, reason=reason)
+
+
+def _check_execute(
+    args: dict[str, Any],
+    *,
+    blocked_commands: Sequence[re.Pattern[str]],
+) -> str | None:
+    """Return a denial reason if the ``execute`` command matches a blocked pattern."""
+    command = args.get("command")
+    if not isinstance(command, str):
+        return None
+    for pattern in blocked_commands:
+        if pattern.search(command):
+            return f"Blocked dangerous command pattern: {pattern.pattern}"
+    return None
+
+
+def _check_write(
+    args: dict[str, Any],
+    *,
+    allowed_write_roots: Sequence[str] | None,
+) -> str | None:
+    """Return a denial reason if ``write_file``/``edit_file`` targets an unsafe path."""
+    path = args.get("path")
+    if not isinstance(path, str):
+        return None
+    # Path-traversal segments are always suspicious, even without explicit roots.
+    if re.search(r"(?:^|/)\.\.(?:/|$)", path):
+        return f"Blocked path-traversal write: {path}"
+    if allowed_write_roots and _path_escapes_roots(path, allowed_write_roots):
+        return f"Blocked write outside allowed roots: {path}"
+    return None
+
+
+def _check_read(
+    args: dict[str, Any],
+    *,
+    blocked_read_paths: Sequence[re.Pattern[str]],
+) -> str | None:
+    """Return a denial reason if ``read_file`` targets a sensitive path."""
+    path = args.get("path")
+    if not isinstance(path, str):
+        return None
+    for pattern in blocked_read_paths:
+        if pattern.search(path):
+            return f"Blocked read of sensitive path: {path}"
+    return None
+
+
+def _redact(text: str, patterns: Sequence[re.Pattern[str]]) -> str:
+    """Replace every secret-shaped match in ``text`` with ``[REDACTED]``."""
+    for pattern in patterns:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def _compile_all(patterns: Sequence[str]) -> tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(p) for p in patterns)
+
+
+def default_security_hook(
+    *,
+    blocked_commands: Sequence[str] | None = None,
+    allowed_write_roots: Sequence[str | Path] | None = None,
+    blocked_read_paths: Sequence[str] | None = None,
+    redact_secrets: bool = True,
+    secret_patterns: Sequence[str] | None = None,
+    mode: Literal["deny", "warn"] = "deny",
+) -> list[Hook]:
+    """Return a ready-to-use list of security hooks for `create_deep_agent`.
+
+    The returned hooks gate `execute`, `write_file`, `edit_file`, and
+    `read_file` against destructive command patterns, path-traversal writes,
+    and sensitive-path reads. When `redact_secrets` is enabled, a second hook
+    scrubs obvious secret shapes (AWS access keys, GitHub PATs, OpenAI-style
+    `sk-` keys, JWTs) from `POST_TOOL_USE` output before the model sees it.
+
+    The defaults are opt-out: pass `mode="warn"` to log instead of block,
+    pass `blocked_commands=[]` to disable a category, or extend any list with
+    your own patterns. Lists you pass *replace* the defaults — concatenate
+    with `DEFAULT_BLOCKED_COMMANDS` etc. if you want to keep them.
+
+    Args:
+        blocked_commands: Regex patterns matched against the `command` arg of
+            the `execute` tool. Defaults to `DEFAULT_BLOCKED_COMMANDS`.
+        allowed_write_roots: If set, `write_file`/`edit_file` paths must
+            resolve under one of these roots. Path-traversal (`..`) segments
+            are blocked unconditionally regardless of this setting.
+        blocked_read_paths: Regex patterns matched against the `path` arg of
+            `read_file`. Defaults to `DEFAULT_BLOCKED_READ_PATHS`.
+        redact_secrets: When True (default), add a `POST_TOOL_USE` hook that
+            replaces matches of `secret_patterns` with `[REDACTED]` in tool
+            output strings.
+        secret_patterns: Regex patterns redacted from tool output. Defaults to
+            `DEFAULT_SECRET_PATTERNS`.
+        mode: `"deny"` (default) blocks matching calls via
+            `HookResult(allow=False)`. `"warn"` allows them through but logs
+            a warning — useful for shadow-mode rollout before enforcing.
+
+    Returns:
+        A list of `Hook` instances. Pass it straight to `create_deep_agent`:
+        `hooks=default_security_hook()`. Use
+        `hooks=[*default_security_hook(), my_extra]` to add custom hooks.
+    """
+    cmd_patterns = _compile_all(
+        DEFAULT_BLOCKED_COMMANDS if blocked_commands is None else blocked_commands
+    )
+    read_patterns = _compile_all(
+        DEFAULT_BLOCKED_READ_PATHS if blocked_read_paths is None else blocked_read_paths
+    )
+    write_roots: tuple[str, ...] | None = (
+        tuple(str(p) for p in allowed_write_roots) if allowed_write_roots else None
+    )
+
+    async def _pre_tool_use(hook_input: HookInput) -> HookResult:
+        tool_name = hook_input.tool_name
+        args = hook_input.tool_input
+        reason: str | None = None
+        if tool_name == "execute":
+            reason = _check_execute(args, blocked_commands=cmd_patterns)
+        elif tool_name in _WRITE_TOOLS:
+            reason = _check_write(args, allowed_write_roots=write_roots)
+        elif tool_name == "read_file":
+            reason = _check_read(args, blocked_read_paths=read_patterns)
+        if reason is None:
+            return HookResult(allow=True)
+        return _make_decision(mode=mode, tool_name=tool_name, reason=reason)
+
+    hooks: list[Hook] = [
+        Hook(
+            event=HookEvent.PRE_TOOL_USE,
+            handler=_pre_tool_use,
+            matcher=r"^(?:execute|write_file|edit_file|read_file)$",
+        )
+    ]
+
+    if redact_secrets:
+        secret_compiled = _compile_all(
+            DEFAULT_SECRET_PATTERNS if secret_patterns is None else secret_patterns
+        )
+
+        async def _post_tool_use(hook_input: HookInput) -> HookResult:
+            if hook_input.tool_result is None:
+                return HookResult(allow=True)
+            redacted = _redact(hook_input.tool_result, secret_compiled)
+            if redacted == hook_input.tool_result:
+                return HookResult(allow=True)
+            return HookResult(allow=True, modified_result=redacted)
+
+        hooks.append(
+            Hook(
+                event=HookEvent.POST_TOOL_USE,
+                handler=_post_tool_use,
+            )
+        )
+
+    return hooks
+
+
 __all__ = [
+    "DEFAULT_BLOCKED_COMMANDS",
+    "DEFAULT_BLOCKED_READ_PATHS",
+    "DEFAULT_SECRET_PATTERNS",
     "EXIT_ALLOW",
     "EXIT_DENY",
     "Hook",
@@ -455,4 +693,5 @@ __all__ = [
     "HookInput",
     "HookResult",
     "HooksCapability",
+    "default_security_hook",
 ]
