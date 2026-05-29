@@ -24,12 +24,14 @@ they do it in the spawn picker (``/fork``) on a session-only basis.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
@@ -270,6 +272,16 @@ class ForkConfigModal(ModalScreen[None]):
     def _input(self, suffix: str) -> Input:
         return self.query_one(f"#{suffix}", Input)
 
+    def _input_or_none(self, suffix: str) -> Input | None:
+        """Like :meth:`_input` but returns ``None`` instead of raising ``NoMatches``.
+
+        Per-branch rows mount asynchronously, so a row may not be present yet
+        when Save fires — callers surface a friendly error rather than crashing.
+        """
+        with contextlib.suppress(NoMatches):
+            return self.query_one(f"#{suffix}", Input)
+        return None
+
     def _show_error(self, message: str) -> None:
         error = self.query_one("#fork-config-error", Static)
         error.update(message)
@@ -463,7 +475,13 @@ class ForkConfigModal(ModalScreen[None]):
 
         budgets: list[float | None] = []
         for i in range(count):
-            raw = self._input(f"fork-config-budget-{i}").value.strip()
+            budget_input = self._input_or_none(f"fork-config-budget-{i}")
+            if budget_input is None:
+                # Row hasn't finished mounting (async mount race) — surface a
+                # friendly error and abort Save instead of crashing on NoMatches.
+                self._show_error(f"Branch {i + 1} row is still loading — try Save again.")
+                return
+            raw = budget_input.value.strip()
             if not raw:
                 budgets.append(None)
                 continue
