@@ -492,11 +492,11 @@ DEFAULT_BLOCKED_READ_PATHS: tuple[str, ...] = (
 # Writing to these paths is at least as dangerous as reading them, so we apply
 # a symmetric denylist independent of ``allowed_write_roots``.
 DEFAULT_BLOCKED_WRITE_PATHS: tuple[str, ...] = (
-    r"(?:^|/|~/)\.ssh(?:/|$)",           # SSH keys, authorized_keys
+    r"(?:^|/|~/)\.ssh(?:/|$)",  # SSH keys, authorized_keys
     r"(?:^|/)etc/(?:passwd|shadow|sudoers)\b",  # Critical system auth files
-    r"(?:^|/)etc/cron",                   # Cron configs (persistence vector)
-    r"(?:^|/|~/)\.aws/credentials\b",    # AWS credentials
-    r"(?:^|/)\.env(?:\.[\w.-]+)?$",      # .env / .env.production (hold secrets)
+    r"(?:^|/)etc/cron",  # Cron configs (persistence vector)
+    r"(?:^|/|~/)\.aws/credentials\b",  # AWS credentials
+    r"(?:^|/)\.env(?:\.[\w.-]+)?$",  # .env / .env.production (hold secrets)
     r"(?:^|/|~/)\.(?:bash_profile|bashrc|profile|zshrc|zprofile)\b",  # Shell startup
 )
 
