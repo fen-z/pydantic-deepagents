@@ -865,6 +865,48 @@ async def test_merge_or_select_wraps_failed_winner_exception():
     assert "branch blew up" in str(excinfo.value)
 
 
+async def test_merge_or_select_does_not_hold_lock_while_awaiting_winner():
+    """The winner await must happen outside self._lock.
+
+    A winner parked on a pending human tool-approval (or just a long run) would
+    otherwise hold the coordinator lock for that unbounded duration, freezing
+    every other lock user (fork, run_on_branch, abort, the budget watcher).
+    """
+    deps = DeepAgentDeps(backend=StateBackend())
+    release = asyncio.Event()
+
+    class _Result:
+        def all_messages(self) -> list[Any]:
+            return _seed_history("winner-done")
+
+    class _BlockingAgent:
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
+            await release.wait()
+            return _Result()
+
+    coord = _make_coordinator(_BlockingAgent(), deps, checkpoint_store=InMemoryCheckpointStore())
+    await coord.fork(
+        [BranchSpec(label="a", steer="A")],
+        parent_history=_seed_history("p"),
+    )
+    branch_id = next(iter(coord.branches))
+
+    merge_task = asyncio.create_task(coord.merge_or_select(f"pick:{branch_id}"))
+    # Let merge_or_select reach the (blocked) winner await.
+    await asyncio.sleep(0)
+    assert not merge_task.done()
+
+    # While the winner is parked, the coordinator lock must remain free and acquirable.
+    assert not coord._lock.locked()
+    await asyncio.wait_for(coord._lock.acquire(), timeout=1.0)
+    coord._lock.release()
+
+    # Unblock the winner; the merge then completes normally.
+    release.set()
+    result = await asyncio.wait_for(merge_task, timeout=2.0)
+    assert result.winner_branch_id == branch_id
+
+
 # ---------------------------------------------------------------------------
 # inspect_branches snapshot
 # ---------------------------------------------------------------------------

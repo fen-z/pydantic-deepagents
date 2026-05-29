@@ -842,33 +842,36 @@ class ForkCoordinator:
         if self._handle is None:  # pragma: no cover - defensive
             raise RuntimeError("merge_or_select called before fork()")
 
-        async with self._lock:
-            winner = self.branches[target_id]
-            try:
-                result = await winner.task
-                history_after_merge = list(result.all_messages()) + list(
-                    winner.extra_message_history
-                )
-            except asyncio.CancelledError:
-                _exhausted_states = {
-                    "terminated",
-                    "budget_exhausted",
-                    "aggregate_budget_exhausted",
-                }
-                if winner.status.state in _exhausted_states and winner.partial_history:
-                    history_after_merge = list(winner.partial_history)
-                else:
-                    raise RuntimeError(
-                        f"Winning branch {target_id!r} was cancelled before merge."
-                    ) from None
-            except Exception as exc:
-                # The branch raised its own exception (state "failed"). Surface it as a
-                # typed RuntimeError so callers (e.g. the merge_or_select tool) can handle
-                # it gracefully instead of having the raw branch exception abort the run.
+        winner = self.branches[target_id]
+        # Await the winning branch *outside* self._lock. The winner may be parked on a
+        # pending human tool-approval (await request.response.get()) for an unbounded
+        # time; holding the lock across that await would freeze every other lock user
+        # (fork(), run_on_branch(), abort, the budget watcher, ...). Once it resolves we
+        # take the lock only for the fast merge mutation below.
+        try:
+            result = await winner.task
+            history_after_merge = list(result.all_messages()) + list(winner.extra_message_history)
+        except asyncio.CancelledError:
+            _exhausted_states = {
+                "terminated",
+                "budget_exhausted",
+                "aggregate_budget_exhausted",
+            }
+            if winner.status.state in _exhausted_states and winner.partial_history:
+                history_after_merge = list(winner.partial_history)
+            else:
                 raise RuntimeError(
-                    f"Winning branch {target_id!r} failed before merge: {exc}"
-                ) from exc
+                    f"Winning branch {target_id!r} was cancelled before merge."
+                ) from None
+        except Exception as exc:
+            # The branch raised its own exception (state "failed"). Surface it as a
+            # typed RuntimeError so callers (e.g. the merge_or_select tool) can handle
+            # it gracefully instead of having the raw branch exception abort the run.
+            raise RuntimeError(
+                f"Winning branch {target_id!r} failed before merge: {exc}"
+            ) from exc
 
+        async with self._lock:
             applied_paths: list[str] = []
             applied_changes = 0
             conflicts: list[str] = []
