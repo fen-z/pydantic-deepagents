@@ -128,6 +128,20 @@ def _truncate_unified_diff(diff_text: str) -> str:
     )
 
 
+def _change_identity(bc: BranchChange) -> tuple[bool, str | None]:
+    """Return a content-identity key for comparing two branch changes.
+
+    Binary changes carry ``new_content=None`` (raw bytes are never captured),
+    so two branches writing *different* bytes to the same path would compare
+    equal on ``new_content`` and be mislabelled as agreement. The binary
+    placeholder embeds a size + sha256 of the content, so use it as the
+    identity for binary changes; text changes use ``new_content`` directly.
+    """
+    if bc.is_binary:
+        return (True, bc.unified_diff_vs_parent)
+    return (False, bc.new_content)
+
+
 def _classify_agreement(branches: dict[str, BranchChange]) -> BranchDiffAgreement:
     """Classify a path's per-branch outcomes into one of the four agreement labels."""
     touchers = [bc for bc in branches.values() if bc.operation != "untouched"]
@@ -139,8 +153,8 @@ def _classify_agreement(branches: dict[str, BranchChange]) -> BranchDiffAgreemen
     for other in touchers[1:]:
         if (
             other.operation != first.operation
-            or other.new_content != first.new_content
             or other.is_binary != first.is_binary
+            or _change_identity(other) != _change_identity(first)
         ):
             return "split"
     return "unanimous_change"

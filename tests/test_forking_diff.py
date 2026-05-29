@@ -193,6 +193,49 @@ async def test_diff_binary_file_returns_placeholder() -> None:
     assert branch_a.size_bytes == len(binary_payload)
 
 
+async def test_diff_divergent_binary_writes_are_split() -> None:
+    """Two branches writing DIFFERENT binary bytes to one path → 'split', not agreement.
+
+    Regression: binary changes carry new_content=None, so classification keyed on
+    new_content alone mislabelled divergent binary writes as unanimous_change.
+    """
+    parent = StateBackend()
+    overlay_a = await _overlay_with_writes(parent, {"asset.bin": b"\x00\x01\x02" * 64})
+    overlay_b = await _overlay_with_writes(parent, {"asset.bin": b"\x00\x09\x09" * 64})
+
+    report = build_diff_report(
+        "fork-bin",
+        [
+            await _make_runtime(branch_id="a", label="alpha", overlay=overlay_a),
+            await _make_runtime(branch_id="b", label="beta", overlay=overlay_b),
+        ],
+    )
+
+    pd = next(p for p in report.paths if p.path == "asset.bin")
+    assert pd.branches["a"].is_binary is True
+    assert pd.branches["b"].is_binary is True
+    assert pd.agreement == "split"
+
+
+async def test_diff_identical_binary_writes_are_unanimous() -> None:
+    """Two branches writing the SAME binary bytes → unanimous_change (true agreement)."""
+    parent = StateBackend()
+    payload = b"\x00\x07\x07" * 64
+    overlay_a = await _overlay_with_writes(parent, {"asset.bin": payload})
+    overlay_b = await _overlay_with_writes(parent, {"asset.bin": payload})
+
+    report = build_diff_report(
+        "fork-bin2",
+        [
+            await _make_runtime(branch_id="a", label="alpha", overlay=overlay_a),
+            await _make_runtime(branch_id="b", label="beta", overlay=overlay_b),
+        ],
+    )
+
+    pd = next(p for p in report.paths if p.path == "asset.bin")
+    assert pd.agreement == "unanimous_change"
+
+
 def test_decode_text_returns_none_for_invalid_utf8() -> None:
     """Unit test: ``_decode_text`` returns None for non-UTF-8 bytes.
 
