@@ -1040,6 +1040,7 @@ class TestModelFallbackHook:
     def test_model_fallback_triggered_in_hook_event_enum(self) -> None:
         assert HookEvent.MODEL_FALLBACK_TRIGGERED.value == "model_fallback_triggered"
 
+
 _SecHandler = Callable[[HookInput], Awaitable[HookResult]]
 
 
