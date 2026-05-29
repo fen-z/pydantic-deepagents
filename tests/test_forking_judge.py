@@ -761,8 +761,10 @@ async def test_resolve_returns_cached_outcome_without_reinvoking_judge():
         merge_result=None,
         judge_usage=None,
     )
+    from pydantic_deep.toolsets.forking.coordinator import _strategy_cache_key
+
     coord._cached_outcome = cached
-    coord._cached_outcome_strategy_kind = "auto_with_fallback"
+    coord._cached_outcome_key = _strategy_cache_key(MergeStrategy(kind="auto_with_fallback"))
 
     class _ExplodingJudge:
         def __init__(self, _model: Any) -> None:
@@ -772,6 +774,38 @@ async def test_resolve_returns_cached_outcome_without_reinvoking_judge():
         outcome = await coord.resolve(MergeStrategy(kind="auto_with_fallback"))
 
     assert outcome is cached
+
+
+async def test_resolve_cache_misses_on_different_threshold():
+    """A re-resolve with a different confidence_threshold must NOT return the stale
+    cached outcome — the cache key includes the threshold and judge model(s)."""
+    coord, _deps = await _coordinator_with_two_branches()
+    a_id = _resolve_winner_id(coord, "a")
+
+    from pydantic_deep.toolsets.forking.coordinator import ResolveOutcome, _strategy_cache_key
+
+    cached = ResolveOutcome(
+        committed=False,
+        auto_eligible=True,
+        verdict=_verdict(winner=a_id, confidence=0.85),
+        signals=ConfidenceSignals(
+            quality_spread=0.5, test_pass_ratio=None, internal_consistency=1.0
+        ),
+        effective_confidence=0.85,
+        merge_result=None,
+        judge_usage=None,
+    )
+    coord._cached_outcome = cached
+    # Cache populated for the default 0.80 threshold ...
+    coord._cached_outcome_key = _strategy_cache_key(
+        MergeStrategy(kind="auto_with_fallback", confidence_threshold=0.80)
+    )
+
+    # ... a re-resolve with a *different* threshold must re-run the judge, not
+    # return the stale outcome. Different keys → cache miss.
+    assert _strategy_cache_key(
+        MergeStrategy(kind="auto_with_fallback", confidence_threshold=0.50)
+    ) != coord._cached_outcome_key
 
 
 async def test_majority_pick_dedupes_caveats_across_same_winner_verdicts():

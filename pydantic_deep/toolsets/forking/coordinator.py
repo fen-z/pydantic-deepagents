@@ -90,6 +90,7 @@ async def _reap_process(proc: asyncio.subprocess.Process) -> None:
         with contextlib.suppress(Exception):
             await asyncio.shield(asyncio.wait_for(proc.wait(), timeout=_CANCEL_CLEANUP_TIMEOUT_S))
 
+
 #: Checked in order; first available env var wins the slot in the vote panel.
 _NATIVE_CHEAP_MODELS: tuple[tuple[str, str], ...] = (
     ("ANTHROPIC_API_KEY", "anthropic:claude-haiku-4-5"),
@@ -156,6 +157,17 @@ def _detect_vote_models(fallback: str) -> list[str]:
         return [fallback] * 3
 
     return [unique[i % len(unique)] for i in range(3)]
+
+
+def _strategy_cache_key(strategy: MergeStrategy) -> tuple[Any, ...]:
+    """Hashable identity of a :class:`MergeStrategy` for the resolve cache.
+
+    Includes every field that affects the resolved outcome — kind,
+    confidence_threshold, and the judge model(s) — so a re-resolve with any
+    differing field misses the cache and re-runs the judge.
+    """
+    judge_models = tuple(strategy.judge_models) if strategy.judge_models is not None else None
+    return (strategy.kind, strategy.confidence_threshold, strategy.judge_model, judge_models)
 
 
 def _describe_blocked_call(call: Any) -> str:
@@ -372,7 +384,7 @@ class ForkCoordinator:
         self._aggregate_watcher: _AggregateBudgetWatcher | None = None
         self.materializer: ForkMaterializer | None = None
         self._cached_outcome: ResolveOutcome | None = None
-        self._cached_outcome_strategy_kind: str | None = None
+        self._cached_outcome_key: tuple[Any, ...] | None = None
         self.branch_runner: BranchRunnerFunc | None = None
 
     @property
@@ -601,7 +613,7 @@ class ForkCoordinator:
             await self.store.save(handle)
             self._handle = handle
             self._cached_outcome = None
-            self._cached_outcome_strategy_kind = None
+            self._cached_outcome_key = None
             self._refresh_manifest()
             return handle
 
@@ -729,7 +741,7 @@ class ForkCoordinator:
             runtime.status.state = "running"
             runtime.status.current_turn += 1
             self._cached_outcome = None
-            self._cached_outcome_strategy_kind = None
+            self._cached_outcome_key = None
             self._refresh_manifest()
 
             new_spec = BranchSpec(
@@ -885,9 +897,7 @@ class ForkCoordinator:
             # The branch raised its own exception (state "failed"). Surface it as a
             # typed RuntimeError so callers (e.g. the merge_or_select tool) can handle
             # it gracefully instead of having the raw branch exception abort the run.
-            raise RuntimeError(
-                f"Winning branch {target_id!r} failed before merge: {exc}"
-            ) from exc
+            raise RuntimeError(f"Winning branch {target_id!r} failed before merge: {exc}") from exc
 
         async with self._lock:
             # Cancel + await every losing branch to quiescence BEFORE flushing the
@@ -953,7 +963,7 @@ class ForkCoordinator:
                 self.materializer.cleanup()
 
             self._cached_outcome = None
-            self._cached_outcome_strategy_kind = None
+            self._cached_outcome_key = None
 
             return merge_result
 
@@ -989,7 +999,7 @@ class ForkCoordinator:
                 self.materializer.cleanup()
 
             self._cached_outcome = None
-            self._cached_outcome_strategy_kind = None
+            self._cached_outcome_key = None
             return aborted
 
     async def _run_tests_for_branch(self, rt: BranchRuntime) -> float | None:
@@ -1080,9 +1090,7 @@ class ForkCoordinator:
         finally:
             # Shield the snapshot tempdir cleanup: it must complete even if this
             # coroutine is being cancelled, otherwise the temp snapshot dir leaks.
-            await asyncio.shield(
-                loop.run_in_executor(None, snap_ctx.__exit__, None, None, None)
-            )
+            await asyncio.shield(loop.run_in_executor(None, snap_ctx.__exit__, None, None, None))
 
     async def _build_branch_outcomes(self) -> tuple[list[BranchOutcome], str]:
         """Materialise per-branch summaries + the parent's first user message.
@@ -1241,12 +1249,15 @@ class ForkCoordinator:
                 judge_usage=None,
             )
 
-        # Skip re-invoking the judge when the user re-opens /merge with the same strategy.
-        if (
-            self._cached_outcome is not None
-            and self._cached_outcome_strategy_kind == effective_strategy.kind
-        ):
-            logger.debug("resolve: returning cached outcome (kind=%r)", effective_strategy.kind)
+        # Skip re-invoking the judge only when the user re-opens /merge with an
+        # identical strategy. The key includes confidence_threshold and the judge
+        # model(s), not just kind — otherwise a second /merge with the same kind but
+        # a different threshold or judge panel would return a stale outcome whose
+        # auto_eligible / effective_confidence reflect the old threshold and never
+        # consults the new judges.
+        strategy_key = _strategy_cache_key(effective_strategy)
+        if self._cached_outcome is not None and self._cached_outcome_key == strategy_key:
+            logger.debug("resolve: returning cached outcome (key=%r)", strategy_key)
             return self._cached_outcome
 
         outcomes, goal = await self._build_branch_outcomes()
@@ -1280,7 +1291,7 @@ class ForkCoordinator:
             judge_usage=judge_usage,
         )
         self._cached_outcome = outcome
-        self._cached_outcome_strategy_kind = effective_strategy.kind
+        self._cached_outcome_key = strategy_key
         return outcome
 
     async def _commit_and_wrap(
