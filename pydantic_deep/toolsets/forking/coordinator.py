@@ -308,7 +308,6 @@ class BranchRuntime:
     partial_history: list[Any] = field(default_factory=list)
     pending_approval: PendingApprovalRequest | None = None
     blocked_commands: list[str] = field(default_factory=list)
-    extra_message_history: list[Any] = field(default_factory=list)
 
 
 class ForkCoordinator:
@@ -694,9 +693,9 @@ class ForkCoordinator:
     async def run_on_branch(self, branch_id: str, user_message: str) -> asyncio.Task[Any]:
         """Start a new turn on a finished branch with ``user_message``.
 
-        The branch must be in ``done`` state. Builds the effective message
-        history from the previous run's result plus any accumulated
-        ``extra_message_history``, spawns a new ``asyncio.Task``, replaces
+        The branch must be in ``done`` state. Seeds the new turn's message
+        history from the previous run's ``all_messages()`` (which already holds
+        the full conversation), spawns a new ``asyncio.Task``, replaces
         ``runtime.task``, and re-attaches the done-callback so the status
         transitions back through ``running`` → ``done``.
 
@@ -721,8 +720,11 @@ class ForkCoordinator:
                     "only 'done' branches accept new turns."
                 )
             prev_result = runtime.task.result()
-            base_history = list(prev_result.all_messages())
-            effective_history = base_history + list(runtime.extra_message_history)
+            # all_messages() already contains the FULL conversation (seed + every
+            # prior turn's request/response tail). Seed the new turn from it directly;
+            # adding a separately-accumulated tail would re-append the previous turn
+            # and duplicate request/response pairs after the second continued turn.
+            effective_history = list(prev_result.all_messages())
 
             runtime.status.state = "running"
             runtime.status.current_turn += 1
@@ -752,10 +754,6 @@ class ForkCoordinator:
                         runtime.status.error = str(t.exception())
                     else:
                         runtime.status.state = "done"
-                        result = t.result()
-                        new_messages = list(result.all_messages())
-                        tail = new_messages[len(effective_history) :]
-                        runtime.extra_message_history.extend(tail)
                     self._refresh_manifest()
                 except Exception:  # pragma: no cover - defensive
                     logger.warning(
@@ -870,7 +868,7 @@ class ForkCoordinator:
         # take the lock only for the fast merge mutation below.
         try:
             result = await winner.task
-            history_after_merge = list(result.all_messages()) + list(winner.extra_message_history)
+            history_after_merge = list(result.all_messages())
         except asyncio.CancelledError:
             _exhausted_states = {
                 "terminated",

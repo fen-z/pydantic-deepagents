@@ -2947,8 +2947,18 @@ async def test_e2_run_on_branch_unknown_id_raises():
         await coord.run_on_branch("bogus-id", "hello")
 
 
-async def test_e2_merge_includes_extra_message_history():
-    """E2.b — merging a branch that ran extra turns includes accumulated history."""
+def _count_user_prompts(messages: list[Any], text: str) -> int:
+    """Count ModelRequest UserPromptParts whose content equals ``text``."""
+    count = 0
+    for msg in messages:
+        for part in getattr(msg, "parts", []):
+            if isinstance(part, UserPromptPart) and part.content == text:
+                count += 1
+    return count
+
+
+async def test_e2_merge_includes_continued_turn_history():
+    """E2.b — merging a branch that ran extra turns includes the continued history."""
     deps = DeepAgentDeps(backend=StateBackend())
     agent = _make_test_agent()
     coord = _make_coordinator(agent, deps)
@@ -2964,7 +2974,39 @@ async def test_e2_merge_includes_extra_message_history():
     await task
 
     merge_result = await coord.merge_or_select(f"pick:{branch_a}")
-    assert len(merge_result.history_after_merge) >= 3  # parent + first + extra
+    assert len(merge_result.history_after_merge) >= 3  # parent + first + continued
+
+
+async def test_run_on_branch_does_not_duplicate_history_across_turns():
+    """Continued turns must not re-append the prior turn's request/response pairs.
+
+    Regression: seeding the next turn from all_messages() + a separately
+    accumulated tail duplicated the previous turn after the second continued turn.
+    """
+    deps = DeepAgentDeps(backend=StateBackend())
+    agent = _make_test_agent()
+    coord = _make_coordinator(agent, deps)
+    parent_history = _seed_history("parent seed")
+    await coord.fork(
+        [BranchSpec(label="a", steer="first")],
+        parent_history=parent_history,
+    )
+    await asyncio.gather(*(rt.task for rt in coord.branches.values()))
+    branch_a = next(iter(coord.branches))
+
+    await (await coord.run_on_branch(branch_a, "turn one"))
+    await (await coord.run_on_branch(branch_a, "turn two"))
+
+    final_history = list(coord.branches[branch_a].task.result().all_messages())
+
+    # Each continued-turn user prompt appears exactly once — no duplication.
+    assert _count_user_prompts(final_history, "turn one") == 1
+    assert _count_user_prompts(final_history, "turn two") == 1
+
+    # The merged history is exactly the final task history — merge adds nothing extra.
+    merge_result = await coord.merge_or_select(f"pick:{branch_a}")
+    assert merge_result.history_after_merge == final_history
+    assert _count_user_prompts(merge_result.history_after_merge, "turn one") == 1
 
 
 # ---------------------------------------------------------------------------
