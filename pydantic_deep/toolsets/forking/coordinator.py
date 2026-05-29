@@ -892,6 +892,25 @@ class ForkCoordinator:
             ) from exc
 
         async with self._lock:
+            # Cancel + await every losing branch to quiescence BEFORE flushing the
+            # winner. BranchOverlay reads fall through to the shared parent backend,
+            # so flushing the winner first would let a not-yet-cancelled loser read
+            # the winner's just-flushed bytes for a path it never touched — leaking
+            # cross-branch state into that loser's tool results / partial_history.
+            discarded: list[str] = []
+            for bid, rt in list(self.branches.items()):
+                if bid == target_id:
+                    continue
+                if not rt.task.done():
+                    rt.task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                        try:
+                            await asyncio.wait_for(rt.task, timeout=_CANCEL_CLEANUP_TIMEOUT_S)
+                        except Exception:  # pragma: no cover - defensive
+                            logger.warning("discarded branch %s cleanup raised", bid, exc_info=True)
+                rt.overlay = None
+                discarded.append(bid)
+
             applied_paths: list[str] = []
             applied_changes = 0
             conflicts: list[str] = []
@@ -910,20 +929,6 @@ class ForkCoordinator:
                 conflicts = list(report.conflicts)
                 flush_errors = list(report.errors)
                 deleted_paths = list(report.deleted_paths)
-
-            discarded: list[str] = []
-            for bid, rt in list(self.branches.items()):
-                if bid == target_id:
-                    continue
-                if not rt.task.done():
-                    rt.task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-                        try:
-                            await asyncio.wait_for(rt.task, timeout=_CANCEL_CLEANUP_TIMEOUT_S)
-                        except Exception:  # pragma: no cover - defensive
-                            logger.warning("discarded branch %s cleanup raised", bid, exc_info=True)
-                rt.overlay = None
-                discarded.append(bid)
 
             winner.overlay = None
 

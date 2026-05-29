@@ -583,6 +583,55 @@ async def test_merge_or_select_picks_winner_and_releases_overlays():
     assert f"post-fork:{handle.fork_id}" in labels
 
 
+async def test_merge_or_select_quiesces_losers_before_winner_flush():
+    """Losing branches must be cancelled + awaited BEFORE the winner is flushed.
+
+    Otherwise a not-yet-cancelled loser whose overlay reads fall through to the
+    shared parent could observe the winner's just-flushed bytes — cross-branch
+    state leaking into its tool results / partial_history.
+    """
+    deps = DeepAgentDeps(backend=StateBackend())
+
+    class _Result:
+        def all_messages(self) -> list[Any]:
+            return _seed_history("winner-done")
+
+    class _SteerAgent:
+        async def run(self, steer: Any, *args: Any, **kwargs: Any) -> Any:
+            if steer == "B":
+                await asyncio.Event().wait()  # loser blocks until cancelled
+                return None  # pragma: no cover
+            return _Result()  # winner completes immediately
+
+    coord = _make_coordinator(_SteerAgent(), deps, checkpoint_store=InMemoryCheckpointStore())
+    await coord.fork(
+        [BranchSpec(label="a", steer="A"), BranchSpec(label="b", steer="B")],
+        parent_history=_seed_history("p"),
+    )
+    winner_id = next(bid for bid, rt in coord.branches.items() if rt.spec.steer == "A")
+    loser_id = next(bid for bid, rt in coord.branches.items() if rt.spec.steer == "B")
+
+    # Winner finishes; loser is still blocked when we start the merge.
+    await coord.branches[winner_id].task
+    assert not coord.branches[loser_id].task.done()
+
+    captured: dict[str, Any] = {}
+    winner_overlay = coord.branches[winner_id].overlay
+    assert winner_overlay is not None
+    real_flush = winner_overlay.flush_to
+
+    def _spy_flush(*a: Any, **k: Any) -> Any:
+        captured["loser_done_at_flush"] = coord.branches[loser_id].task.done()
+        return real_flush(*a, **k)
+
+    winner_overlay.flush_to = _spy_flush  # type: ignore[method-assign]
+
+    result = await coord.merge_or_select(f"pick:{winner_id}")
+    assert result.winner_branch_id == winner_id
+    # The loser was quiesced (cancelled + awaited to done) before the winner flushed.
+    assert captured["loser_done_at_flush"] is True
+
+
 async def test_merge_or_select_invalid_action_raises():
     deps = DeepAgentDeps(backend=StateBackend())
     coord = _make_coordinator(_make_test_agent(), deps, checkpoint_store=InMemoryCheckpointStore())
