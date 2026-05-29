@@ -11,7 +11,7 @@ branch task completes — the chat screen attaches an
 from __future__ import annotations
 
 import contextlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -22,6 +22,9 @@ from textual.widgets import Static
 from apps.cli.text_heuristics import looks_like_error
 from apps.cli.widgets.fork_state import BranchState, state_label
 from apps.cli.widgets.message_list import MessageList
+
+if TYPE_CHECKING:
+    from apps.cli.widgets.assistant_message import AssistantMessage
 
 
 class BranchPanelWidget(Vertical):
@@ -105,6 +108,11 @@ class BranchPanelWidget(Vertical):
         self.can_focus = True
         self._last_replayed_len: int = 0
         self._rendered_call_ids: set[str] = set()
+        # call_id -> the AssistantMessage that holds its tool-call widget. Lets a
+        # ToolReturnPart arriving in a later tick complete the row via a direct
+        # reference instead of scanning ``msg_list.children`` — which may not have
+        # flushed the freshly-mounted message yet, leaving the spinner stuck.
+        self._rendered_call_msgs: dict[str, AssistantMessage] = {}
         self.streaming: bool = False
 
     def compose(self) -> ComposeResult:
@@ -165,6 +173,7 @@ class BranchPanelWidget(Vertical):
             # the full history afresh, so a clean list is correct.
             self._last_replayed_len = 0
             self._rendered_call_ids = set()
+            self._rendered_call_msgs = {}
             with contextlib.suppress(NoMatches):
                 self.query_one(MessageList).clear_messages()
         self.reason = reason
@@ -288,18 +297,19 @@ class BranchPanelWidget(Vertical):
                         assistant_msg = msg_list.begin_assistant_message()
                     assistant_msg.add_tool_call(part.tool_name, args, call_id)
                     self._rendered_call_ids.add(call_id)
+                    self._rendered_call_msgs[call_id] = assistant_msg
                 elif isinstance(part, ToolReturnPart):
-                    content_str = str(part.content)
-                    # Look the call up by id across rendered messages — not via
-                    # current_assistant, which may be None (a prior tick's slice
-                    # ended with a text part) or a different message than the one
-                    # holding the matching ToolCallPart across the tick boundary.
-                    msg_list.complete_tool_call_by_id(
-                        part.tool_call_id,
-                        content_str,
-                        0.0,
-                        looks_like_error(content_str),
-                    )
+                    # Complete the row via the message that rendered the call,
+                    # held by reference. current_assistant may be None (a prior
+                    # tick ended with a text part) and scanning msg_list.children
+                    # can miss a freshly-mounted message whose mount hasn't flushed
+                    # yet — leaving the spinner stuck across the tick boundary.
+                    held = self._rendered_call_msgs.get(part.tool_call_id)
+                    if held is not None:
+                        content_str = str(part.content)
+                        held.complete_tool_call(
+                            part.tool_call_id, content_str, 0.0, looks_like_error(content_str)
+                        )
 
         self._last_replayed_len = len(messages)
 
