@@ -51,6 +51,23 @@ from pydantic_deep.types import (
     PathDiff,
 )
 
+
+def test_judge_verdict_confidence_must_be_in_unit_interval() -> None:
+    """JudgeVerdict.confidence is bounded to [0, 1] — out-of-range is rejected."""
+    import pydantic
+
+    from pydantic_deep.types import JudgeVerdict
+
+    # Valid endpoints are accepted.
+    assert JudgeVerdict(winner_branch_id="a", confidence=0.0, reasoning="r").confidence == 0.0
+    assert JudgeVerdict(winner_branch_id="a", confidence=1.0, reasoning="r").confidence == 1.0
+
+    # Out-of-range values are rejected (so they can't skew tie-break / mean / product).
+    for bad in (1.5, -0.1, 2.0):
+        with pytest.raises(pydantic.ValidationError):
+            JudgeVerdict(winner_branch_id="a", confidence=bad, reasoning="r")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

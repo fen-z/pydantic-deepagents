@@ -453,7 +453,10 @@ class JudgeVerdict(BaseModel):
     """
 
     winner_branch_id: str
-    confidence: float
+    # Bounded to [0, 1]: an out-of-range value (e.g. a model emitting 1.5) would
+    # otherwise skew the tie-break (max by confidence), inflate mean_confidence,
+    # and distort compute_confidence's heuristic × judge_confidence product.
+    confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
     rejected_with_reasons: dict[str, str] = Field(default_factory=dict)
     caveats: list[str] = Field(default_factory=list)
