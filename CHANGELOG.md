@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.25] - 2026-06-07
+
+### Fixed
+
+- **Approved shell commands could hang forever after the first attempt failed** ([#136](https://github.com/vstorm-co/pydantic-deepagents/issues/136)) (`apps/cli/screens/chat.py`). When `execute` requires approval, the TUI handled exactly **one** round of `DeferredToolRequests`. But the model frequently issues a follow-up command in the same turn when the first one fails — most visibly on Windows, where `rm -rf` errors (`'rm' is not recognized`) and the agent immediately retries with `rd`/`rmdir`. That retry is a *second* approval round, which the single-pass resume code silently dropped: the follow-up tool call stayed deferred-but-unsurfaced and its spinner spun indefinitely (reporters saw 460–693s). The deferred-approval resume is now a `while` loop that surfaces every subsequent approval round until the run no longer ends on a `DeferredToolRequests`, so each retried command is approved and actually executes. Not Windows-specific in cause (the subprocess path and Textual's event loop are fine); Windows just reliably triggers the multi-round retry that exposed it.
+- **Project-local `.env` was shadowed by the global `~/.pydantic-deep/.env`** (`apps/cli/main.py`). The startup dotenv loads ran global-first with the project `./.env` last at `override=False`, so a key already set by the global file (e.g. a stale `OPENROUTER_API_KEY`) could never be corrected by the project's own working value — surfacing as a `401 "User not found"` from OpenRouter despite a valid project key. Loads are now ordered most-specific-first (all `override=False`): project files win over the global fallback, while real shell env vars still take precedence over every dotenv file.
+
 ## [0.3.24] - 2026-06-01
 
 ### Fixed
