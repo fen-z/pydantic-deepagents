@@ -267,7 +267,7 @@ class TestDeepAgentDepsExtended:
         """Test that __post_init__ works with non-StateBackend."""
         # This covers the branch where backend is NOT a StateBackend
         deps = DeepAgentDeps(backend=local_backend)
-        assert deps.backend is local_backend
+        assert deps.backend.unwrap() is local_backend
         # files dict should remain empty (not synced from backend)
         assert deps.files == {}
 

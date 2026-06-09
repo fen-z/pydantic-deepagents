@@ -339,11 +339,12 @@ def create_fork_toolset(  # noqa: C901
             branch.
         """
         backend = ctx.deps.backend
-        if not isinstance(backend, BranchOverlay):
+        raw = getattr(backend, "unwrap", lambda: backend)()
+        if not isinstance(raw, BranchOverlay):
             return "delete_file is only available inside a fork branch."
-        if not backend.exists(path):
+        if not raw.exists(path):
             return f"error: '{path}' does not exist in this branch"
-        backend.delete(path)
+        raw.delete(path)
         return f"deleted: {path}"
 
     @toolset.tool
@@ -402,7 +403,7 @@ def create_fork_toolset(  # noqa: C901
                 f"diff_branches failed: fork_id {fork_id!r} does not match the "
                 f"active fork {active_fork_id!r}."
             )
-        return build_diff_report(
+        return await build_diff_report(
             active_fork_id,
             list(coordinator.branches.values()),
             paths_filter=paths,

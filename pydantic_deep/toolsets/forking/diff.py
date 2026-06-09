@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import difflib
 import hashlib
-from typing import TYPE_CHECKING, Protocol
+import inspect
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic_deep.processors.eviction import create_content_preview
 from pydantic_deep.types import (
@@ -40,13 +41,14 @@ if TYPE_CHECKING:
 class _BytesReadable(Protocol):
     """Minimal read surface needed by the diff builder.
 
-    Both `BackendProtocol` and `BranchOverlay` satisfy this - using a
-    narrow local protocol keeps strict typing happy without depending on
-    backend-level method signature quirks (e.g. `grep_raw` arity).
+    Accepts both sync backends (BackendProtocol, BranchOverlay) and async
+    backends (AsyncBackendAdapter). The ``_read_path_bytes`` helper uses
+    ``inspect.isawaitable`` to dispatch correctly at runtime, so method
+    return types are ``Any`` to accommodate both signatures.
     """
 
-    def exists(self, path: str) -> bool: ...
-    def read_bytes(self, path: str) -> bytes: ...
+    def exists(self, path: str) -> Any: ...
+    def read_bytes(self, path: str) -> Any: ...
 
 
 #: Bytes read from the start of a file when sniffing for binary content.
@@ -78,18 +80,21 @@ def _binary_placeholder(data: bytes, *, digest: str | None = None) -> str:
     return f"[binary · {len(data)} · sha256:{full[:_BINARY_HASH_PREFIX_HEX_LEN]}]"
 
 
-def _read_path_bytes(backend: _BytesReadable, path: str) -> bytes | None:
+async def _read_path_bytes(backend: _BytesReadable, path: str) -> bytes | None:
     """Read `path` from `backend` as raw bytes, or `None` if absent.
 
-    Uses `exists()` first because some backends (notably `StateBackend`)
-    silently return `b""` for missing paths instead of raising - we need
-    to distinguish "empty file" from "no file" for the `operation`
-    classification (created vs modified).
+    Handles both sync (BranchOverlay) and async (AsyncBackendAdapter) backends.
     """
-    if not backend.exists(path):
+    exists_result = backend.exists(path)
+    if inspect.isawaitable(exists_result):
+        exists_result = await exists_result
+    if not exists_result:
         return None
     try:
-        return backend.read_bytes(path)
+        result: Any = backend.read_bytes(path)
+        if inspect.isawaitable(result):
+            result = await result
+        return bytes(result) if result is not None else None
     except (FileNotFoundError, KeyError):  # pragma: no cover - defensive
         return None
 
@@ -167,7 +172,7 @@ def _classify_agreement(branches: dict[str, BranchChange]) -> BranchDiffAgreemen
     return "unanimous_change"
 
 
-def _resolve_parent_content(
+async def _resolve_parent_content(
     parent_backend: _BytesReadable,
     path: str,
 ) -> tuple[str | None, bytes | None]:
@@ -177,7 +182,7 @@ def _resolve_parent_content(
     still detect binary status without exposing undecodable bytes through
     the text field of :class:`PathDiff`.
     """
-    raw = _read_path_bytes(parent_backend, path)
+    raw = await _read_path_bytes(parent_backend, path)
     if raw is None:
         return None, None
     if _is_binary_bytes(raw):
@@ -185,7 +190,7 @@ def _resolve_parent_content(
     return _decode_text(raw), raw
 
 
-def _build_branch_change(
+async def _build_branch_change(
     *,
     runtime: BranchRuntime,
     path: str,
@@ -230,7 +235,7 @@ def _build_branch_change(
         )
 
     # raise > assert so the invariant guard survives python -O.
-    raw = _read_path_bytes(overlay, path)
+    raw = await _read_path_bytes(overlay, path)
     if raw is None:  # pragma: no cover - invariant guard; see comment above
         raise RuntimeError(
             f"overlay recorded a change for {path!r} but its content is missing — "
@@ -269,7 +274,7 @@ def _build_branch_change(
     )
 
 
-def build_diff_report(
+async def build_diff_report(
     fork_id: str,
     runtimes: list[BranchRuntime],
     *,
@@ -334,11 +339,11 @@ def build_diff_report(
         if parent_backend is None:
             parent_text, parent_raw = None, None
         else:
-            parent_text, parent_raw = _resolve_parent_content(parent_backend, path)
+            parent_text, parent_raw = await _resolve_parent_content(parent_backend, path)
 
         branches_for_path: dict[str, BranchChange] = {}
         for runtime in runtimes:
-            change = _build_branch_change(
+            change = await _build_branch_change(
                 runtime=runtime,
                 path=path,
                 touched_paths=touched_per_branch[runtime.status.id],

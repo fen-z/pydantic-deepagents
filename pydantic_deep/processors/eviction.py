@@ -30,7 +30,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.tools import RunContext
-from pydantic_ai_backends import BackendProtocol
+from pydantic_ai_backends import AsyncBackendProtocol, BackendProtocol
+from pydantic_ai_backends.adapter import AsyncBackendAdapter
 
 NUM_CHARS_PER_TOKEN = 4
 """Approximate number of characters per token.
@@ -315,23 +316,23 @@ class EvictionProcessor:
         while len(self._evicted_ids) > self.max_evicted_ids:
             self._evicted_ids.popitem(last=False)
 
-    def _resolve_backend(self, ctx: RunContext[Any]) -> BackendProtocol:
+    def _resolve_backend(self, ctx: RunContext[Any]) -> AsyncBackendProtocol | AsyncBackendAdapter:
         """Resolve the backend to use for writing evicted content.
 
-        Prefers the runtime backend from `ctx.deps.backend` to ensure
+        Prefers the runtime backend from ``ctx.deps.backend`` to ensure
         evicted files are accessible by console tools (read_file, grep).
-        Falls back to `self.backend` if deps has no backend attribute.
+        Falls back to ``self.backend`` if deps has no backend attribute.
 
         Args:
             ctx: The run context from pydantic-ai.
 
         Returns:
-            The backend to use for writing.
+            The async backend to use for writing.
         """
         deps_backend = getattr(ctx.deps, "backend", None)
-        if deps_backend is not None and isinstance(deps_backend, BackendProtocol):
+        if deps_backend is not None and isinstance(deps_backend, (AsyncBackendProtocol, AsyncBackendAdapter)):
             return deps_backend
-        return self.backend
+        return self.backend  # type: ignore[return-value,unused-ignore]
 
     async def __call__(
         self, ctx: RunContext[Any], messages: list[ModelMessage]
@@ -387,7 +388,7 @@ class EvictionProcessor:
                 # Evict: save to backend, replace with preview
                 sanitized_id = _sanitize_id(part.tool_call_id)
                 file_path = f"{self.eviction_path}/{sanitized_id}"
-                write_result = backend.write(file_path, content_str)
+                write_result = await backend.write(file_path, content_str)
 
                 if write_result.error:
                     # Keep original on write failure
@@ -533,12 +534,12 @@ class EvictionCapability(AbstractCapability[Any]):
     max_binary_content: int | None = DEFAULT_MAX_BINARY_CONTENT
     on_eviction: Callable[[str, str, int, int], Any] | None = None
 
-    def _resolve_backend(self, ctx: RunContext[Any]) -> BackendProtocol | None:
+    def _resolve_backend(self, ctx: RunContext[Any]) -> AsyncBackendProtocol | AsyncBackendAdapter | None:
         """Resolve backend from deps or fallback."""
         deps_backend = getattr(ctx.deps, "backend", None)
-        if deps_backend is not None and isinstance(deps_backend, BackendProtocol):
+        if deps_backend is not None and isinstance(deps_backend, (AsyncBackendProtocol, AsyncBackendAdapter)):
             return deps_backend
-        return self.backend
+        return self.backend  # type: ignore[return-value,unused-ignore]
 
     async def after_tool_execute(
         self,
@@ -598,7 +599,7 @@ class EvictionCapability(AbstractCapability[Any]):
 
         sanitized_id = _sanitize_id(call.tool_call_id)
         file_path = f"{self.eviction_path}/{sanitized_id}"
-        write_result = backend.write(file_path, content_str)
+        write_result = await backend.write(file_path, content_str)
 
         if write_result.error:
             return None
@@ -645,7 +646,7 @@ class EvictionCapability(AbstractCapability[Any]):
         if backend is None:
             return request_context
 
-        request_context.messages = _prune_binaries_in_messages(
+        request_context.messages = await _prune_binaries_in_messages(
             request_context.messages,
             max_binary_content=limit,
             backend=backend,
@@ -654,11 +655,11 @@ class EvictionCapability(AbstractCapability[Any]):
         return request_context
 
 
-def _prune_binaries_in_messages(
+async def _prune_binaries_in_messages(
     messages: list[ModelMessage],
     *,
     max_binary_content: int,
-    backend: BackendProtocol,
+    backend: AsyncBackendProtocol | AsyncBackendAdapter,
     eviction_path: str,
 ) -> list[ModelMessage]:
     """Return `messages` with older binary parts pruned and stored in `backend`."""
@@ -677,7 +678,7 @@ def _prune_binaries_in_messages(
             part = new_parts[part_idx]
 
             if isinstance(part, UserPromptPart):
-                new_content, kept, part_modified = _prune_user_content(
+                new_content, kept, part_modified = await _prune_user_content(
                     part.content,
                     kept=kept,
                     max_binary_content=max_binary_content,
@@ -692,7 +693,7 @@ def _prune_binaries_in_messages(
                     modified = True
 
             elif isinstance(part, ToolReturnPart):
-                new_content, kept, part_modified = _prune_tool_return_content(
+                new_content, kept, part_modified = await _prune_tool_return_content(
                     part.content,
                     kept=kept,
                     max_binary_content=max_binary_content,
@@ -719,12 +720,12 @@ def _prune_binaries_in_messages(
     return new_messages
 
 
-def _prune_user_content(
+async def _prune_user_content(
     content: str | Sequence[Any],
     *,
     kept: int,
     max_binary_content: int,
-    backend: BackendProtocol,
+    backend: AsyncBackendProtocol | AsyncBackendAdapter,
     eviction_path: str,
 ) -> tuple[str | list[Any], int, bool]:
     """Prune binaries from a `UserPromptPart.content` value.
@@ -746,7 +747,7 @@ def _prune_user_content(
         if kept < max_binary_content:
             kept += 1
             continue
-        replacement = _store_and_replace_binary(item, backend=backend, eviction_path=eviction_path)
+        replacement = await _store_and_replace_binary(item, backend=backend, eviction_path=eviction_path)
         if replacement is None:
             kept += 1
             continue
@@ -756,12 +757,12 @@ def _prune_user_content(
     return items, kept, modified
 
 
-def _prune_tool_return_content(
+async def _prune_tool_return_content(
     content: Any,
     *,
     kept: int,
     max_binary_content: int,
-    backend: BackendProtocol,
+    backend: AsyncBackendProtocol | AsyncBackendAdapter,
     eviction_path: str,
 ) -> tuple[Any, int, bool]:
     """Prune binaries from a `ToolReturnPart.content` value.
@@ -776,7 +777,7 @@ def _prune_tool_return_content(
     if isinstance(content, BinaryContent):
         if kept < max_binary_content:
             return content, kept + 1, False
-        replacement = _store_and_replace_binary(
+        replacement = await _store_and_replace_binary(
             content, backend=backend, eviction_path=eviction_path
         )
         if replacement is None:
@@ -794,7 +795,7 @@ def _prune_tool_return_content(
             if kept < max_binary_content:
                 kept += 1
                 continue
-            replacement = _store_and_replace_binary(
+            replacement = await _store_and_replace_binary(
                 item, backend=backend, eviction_path=eviction_path
             )
             if replacement is None:
@@ -808,10 +809,10 @@ def _prune_tool_return_content(
     return content, kept, False
 
 
-def _store_and_replace_binary(
+async def _store_and_replace_binary(
     binary: BinaryContent,
     *,
-    backend: BackendProtocol,
+    backend: AsyncBackendProtocol | AsyncBackendAdapter,
     eviction_path: str,
 ) -> str | None:
     """Persist `binary` to the backend and return a text replacement.
@@ -820,7 +821,7 @@ def _store_and_replace_binary(
     keep the original binary in place.
     """
     file_path = _binary_storage_path(eviction_path, binary)
-    write_result = backend.write(file_path, binary.data)  # type: ignore[attr-defined, unused-ignore]
+    write_result = await backend.write(file_path, binary.data)  # type: ignore[attr-defined, unused-ignore]
     if write_result.error:
         return None
     return _binary_replacement_text(binary, file_path)

@@ -510,9 +510,9 @@ def test_clone_for_branch_share_readonly_backend_no_overlay():
     parent_backend = StateBackend()
     deps = DeepAgentDeps(backend=parent_backend)
     cloned = clone_for_branch(deps, BranchIsolation(backend="share_readonly"))
-    assert cloned.backend is parent_backend
+    assert cloned.backend.unwrap() is parent_backend
     cloned2 = clone_for_branch(deps, BranchIsolation(backend="share"))
-    assert cloned2.backend is parent_backend
+    assert cloned2.backend.unwrap() is parent_backend
 
 
 def test_clone_for_branch_increments_depth():

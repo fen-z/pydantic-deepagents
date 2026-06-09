@@ -6,7 +6,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic_ai_backends import StateBackend
+from pydantic_ai_backends import StateBackend, ensure_async
 from pydantic_ai_backends.types import ExecuteResponse
 
 from pydantic_deep.toolsets.skills.backend import (
@@ -105,7 +105,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="readme.md",
             uri="/skills/test/readme.md",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == "# Hello World"
@@ -114,7 +114,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="data.json",
             uri="/skills/test/data.json",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == {"key": "value"}
@@ -123,7 +123,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="config.yaml",
             uri="/skills/test/config.yaml",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == {"name": "test", "version": 1}
@@ -133,7 +133,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="config.yml",
             uri="/skills/test/config.yml",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == {"items": ["one", "two"]}
@@ -142,7 +142,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="plain.txt",
             uri="/skills/test/plain.txt",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == "plain text content"
@@ -152,7 +152,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="bad.json",
             uri="/skills/test/bad.json",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == "not json {"
@@ -162,7 +162,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="bad.yaml",
             uri="/skills/test/bad.yaml",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == "invalid: yaml: ["
@@ -190,12 +190,12 @@ class TestBackendSkillResource:
     async def test_load_backend_error_raises(self):
         """If read_bytes raises, SkillResourceLoadError is raised."""
         failing_backend = MagicMock()
-        failing_backend.read_bytes.side_effect = OSError("disk error")
+        failing_backend._read_bytes.side_effect = OSError("disk error")
 
         resource = BackendSkillResource(
             name="missing.txt",
             uri="/skills/test/missing.txt",
-            backend=failing_backend,
+            backend=ensure_async(failing_backend),
         )
         with pytest.raises(SkillResourceLoadError, match="Failed to read resource"):
             await resource.load(ctx=None)
@@ -205,7 +205,7 @@ class TestBackendSkillResource:
         resource = BackendSkillResource(
             name="Makefile",
             uri="/skills/test/Makefile",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         result = await resource.load(ctx=None)
         assert result == "all: build"
@@ -226,7 +226,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_basic(self):
         backend = MockSandboxBackend(ExecuteResponse(output="hello world", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend, timeout=30)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend), timeout=30)
         script = self._make_script()
 
         result = await executor.run(script)
@@ -236,7 +236,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_with_args(self):
         backend = MockSandboxBackend(ExecuteResponse(output="done", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         result = await executor.run(script, args={"input": "data.csv", "verbose": True})
@@ -246,7 +246,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_with_bool_false_skipped(self):
         backend = MockSandboxBackend(ExecuteResponse(output="ok", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         await executor.run(script, args={"debug": False})
@@ -254,7 +254,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_with_none_value_skipped(self):
         backend = MockSandboxBackend(ExecuteResponse(output="ok", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         await executor.run(script, args={"optional": None})
@@ -262,7 +262,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_with_list_args(self):
         backend = MockSandboxBackend(ExecuteResponse(output="ok", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         await executor.run(script, args={"file": ["a.txt", "b.txt"]})
@@ -270,7 +270,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_nonzero_exit(self):
         backend = MockSandboxBackend(ExecuteResponse(output="error msg", exit_code=1))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         result = await executor.run(script)
@@ -280,7 +280,7 @@ class TestBackendSkillScriptExecutor:
         backend = MockSandboxBackend(
             ExecuteResponse(output="partial output", exit_code=0, truncated=True)
         )
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         result = await executor.run(script)
@@ -288,7 +288,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_empty_output(self):
         backend = MockSandboxBackend(ExecuteResponse(output="", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         result = await executor.run(script)
@@ -297,7 +297,7 @@ class TestBackendSkillScriptExecutor:
     async def test_run_shell_injection_escaped(self):
         """Verify shell metacharacters in args are escaped (issue #31)."""
         backend = MockSandboxBackend(ExecuteResponse(output="safe", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         await executor.run(script, args={"filename": "$(whoami)"})
@@ -307,7 +307,7 @@ class TestBackendSkillScriptExecutor:
 
     async def test_run_no_uri_raises(self):
         backend = MockSandboxBackend()
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script(uri=None)
         script.uri = None
 
@@ -317,7 +317,7 @@ class TestBackendSkillScriptExecutor:
     async def test_run_backend_exception_raises(self):
         backend = MockSandboxBackend()
         backend.execute = MagicMock(side_effect=RuntimeError("connection lost"))  # type: ignore[method-assign]
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = self._make_script()
 
         with pytest.raises(SkillScriptExecutionError, match="Failed to execute"):
@@ -329,7 +329,7 @@ class TestBackendSkillScript:
 
     async def test_run_delegates_to_executor(self):
         backend = MockSandboxBackend(ExecuteResponse(output="executed", exit_code=0))
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = BackendSkillScript(
             name="run.py",
             uri="/skills/test/run.py",
@@ -340,7 +340,7 @@ class TestBackendSkillScript:
 
     async def test_run_no_uri_raises(self):
         backend = MockSandboxBackend()
-        executor = BackendSkillScriptExecutor(backend=backend)
+        executor = BackendSkillScriptExecutor(backend=ensure_async(backend))
         script = BackendSkillScript(
             name="run.py",
             uri="/placeholder",  # satisfy __post_init__
@@ -406,7 +406,7 @@ class TestDiscovery:
         backend.write("/skills/test/data.json", '{"key": "val"}')
         backend.write("/skills/test/sub/template.txt", "template content")
 
-        resources = _discover_backend_resources(backend, "/skills/test")
+        resources = _discover_backend_resources(backend, ensure_async(backend), "/skills/test")
 
         names = [r.name for r in resources]
         assert "readme.md" in names or any("readme" in n for n in names)
@@ -416,14 +416,14 @@ class TestDiscovery:
 
     def test_discover_resources_empty_dir(self):
         backend = StateBackend()
-        resources = _discover_backend_resources(backend, "/skills/empty")
+        resources = _discover_backend_resources(backend, ensure_async(backend), "/skills/empty")
         assert resources == []
 
     def test_discover_resources_glob_error_handled(self):
         """If glob_info throws, resources are still collected for other extensions."""
         backend = MagicMock()
         backend.glob_info.side_effect = RuntimeError("glob failed")
-        resources = _discover_backend_resources(backend, "/skills/test")
+        resources = _discover_backend_resources(backend, ensure_async(backend), "/skills/test")
         assert resources == []
 
     def test_discover_scripts(self):
@@ -632,18 +632,18 @@ class TestBackendSkillsDirectory:
 
     def test_unexpected_error_wraps_in_validation_error(self):
         backend = StateBackend()
-        # Write a valid-looking SKILL.md but make read_bytes fail
+        # Write a valid-looking SKILL.md but make _read_bytes fail
         backend.write("/skills/test/SKILL.md", "---\nname: test\n---\nContent")
 
-        # Patch read_bytes to fail after glob succeeds
-        original_read = backend.read_bytes
+        # Patch _read_bytes to fail after glob succeeds
+        original_read = backend._read_bytes
 
         def failing_read(path: str) -> bytes:
             if "SKILL.md" in path:
                 raise OSError("disk error")
             return original_read(path)  # type: ignore[no-any-return]
 
-        backend.read_bytes = failing_read
+        backend._read_bytes = failing_read
 
         with pytest.raises(SkillValidationError, match="Failed to load skill"):
             BackendSkillsDirectory(backend=backend, path="/skills")
@@ -743,7 +743,7 @@ class TestCoverageEdgeCases:
         resource = BackendSkillResource(
             name="config.yaml",
             uri="/skills/test/config.yaml",
-            backend=backend,
+            backend=ensure_async(backend),
         )
         # Without pyyaml, should return raw text
         result = await resource.load(ctx=None)

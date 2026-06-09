@@ -1,7 +1,7 @@
 """Tests for the large tool output eviction processor."""
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic_ai.messages import (
@@ -16,7 +16,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_backends import StateBackend, WriteResult
+from pydantic_ai_backends import StateBackend, WriteResult, ensure_async
 
 from pydantic_deep import (
     DEFAULT_EVICTION_PATH,
@@ -243,7 +243,7 @@ class TestEvictionProcessor:
     async def test_small_content_unchanged(self):
         """Content below threshold is not modified."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=100)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=100)
         ctx = _make_ctx(backend)
 
         # 100 tokens * 4 chars = 400 chars threshold
@@ -261,7 +261,7 @@ class TestEvictionProcessor:
     async def test_large_content_evicted(self):
         """Content above threshold is evicted to backend."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)  # 40 chars threshold
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)  # 40 chars threshold
         ctx = _make_ctx(backend)
 
         large_content = _make_large_content(20)
@@ -279,7 +279,7 @@ class TestEvictionProcessor:
         assert "read_file" in str(tool_part.content)
 
         # File should be written to backend
-        evicted_content = backend.read_bytes("/large_tool_results/call_123")
+        evicted_content = backend._read_bytes("/large_tool_results/call_123")
         assert evicted_content == large_content.encode()
 
     @pytest.mark.anyio
@@ -289,7 +289,7 @@ class TestEvictionProcessor:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)  # 40-char threshold
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)  # 40-char threshold
         ctx = _make_ctx(backend)
 
         image = BinaryContent(data=b"\x89PNG" + b"\x00" * 100_000, media_type="image/png")
@@ -303,7 +303,7 @@ class TestEvictionProcessor:
         assert isinstance(out_part, ToolReturnPart)
         # Content is the original BinaryContent, untouched.
         assert out_part.content is image
-        assert backend.read_bytes("/large_tool_results/call_bin") in (None, b"")
+        assert backend._read_bytes("/large_tool_results/call_bin") in (None, b"")
 
     async def test_evicted_ids_bounded_fifo(self):
         """The evicted-id tracking set is bounded: oldest IDs drop past the cap."""
@@ -322,7 +322,7 @@ class TestEvictionProcessor:
     async def test_eviction_preserves_metadata(self):
         """Evicted ToolReturnPart preserves metadata and timestamp."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         ts = datetime(2024, 6, 15, tzinfo=timezone.utc)
@@ -349,7 +349,7 @@ class TestEvictionProcessor:
     async def test_write_failure_keeps_original(self):
         """On write failure, original content is preserved."""
         mock_backend = MagicMock()
-        mock_backend.write.return_value = WriteResult(error="disk full")
+        mock_backend.write = AsyncMock(return_value=WriteResult(error="disk full"))
 
         processor = EvictionProcessor(backend=mock_backend, token_limit=10)
         # ctx.deps.backend will be from DeepAgentDeps, but we want to test
@@ -370,7 +370,7 @@ class TestEvictionProcessor:
     async def test_non_str_content_evicted(self):
         """Dict/list content is converted to string and evicted."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         # Dict content that serializes to >40 chars
@@ -388,7 +388,7 @@ class TestEvictionProcessor:
     async def test_skips_non_model_request(self):
         """ModelResponse messages pass through unchanged."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         response = ModelResponse(
@@ -404,7 +404,7 @@ class TestEvictionProcessor:
     async def test_skips_non_tool_return_parts(self):
         """UserPromptPart and other parts pass through unchanged."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         request = ModelRequest(
@@ -426,7 +426,7 @@ class TestEvictionProcessor:
     async def test_mixed_parts_only_large_evicted(self):
         """In a request with multiple tool returns, only large ones are evicted."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         small_return = _make_tool_return("small", tool_call_id="call_small")
@@ -454,7 +454,7 @@ class TestEvictionProcessor:
     async def test_idempotent_no_re_eviction(self):
         """Already-evicted tool outputs are not re-evicted on subsequent calls."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         large_content = "x" * 500
@@ -479,7 +479,7 @@ class TestEvictionProcessor:
     async def test_custom_token_limit(self):
         """Custom token_limit is respected."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=1000)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=1000)
         ctx = _make_ctx(backend)
 
         # 1000 tokens * 4 = 4000 chars threshold
@@ -508,7 +508,7 @@ class TestEvictionProcessor:
         """Custom eviction_path is used for file storage."""
         backend = StateBackend()
         processor = EvictionProcessor(
-            backend=backend, token_limit=10, eviction_path="/custom/evicted"
+            backend=ensure_async(backend), token_limit=10, eviction_path="/custom/evicted"
         )
         ctx = _make_ctx(backend)
 
@@ -523,14 +523,14 @@ class TestEvictionProcessor:
         assert "/custom/evicted/" in str(tool_part.content)
 
         # Check file was written to custom path
-        evicted = backend.read_bytes("/custom/evicted/call_custom")
+        evicted = backend._read_bytes("/custom/evicted/call_custom")
         assert evicted == large_content.encode()
 
     @pytest.mark.anyio
     async def test_custom_head_tail_lines(self):
         """Custom head_lines and tail_lines are used in preview."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10, head_lines=2, tail_lines=2)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10, head_lines=2, tail_lines=2)
         ctx = _make_ctx(backend)
 
         large_content = _make_large_content(20)
@@ -548,7 +548,7 @@ class TestEvictionProcessor:
     async def test_preserves_request_timestamp(self):
         """Evicted ModelRequest preserves the original timestamp."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         ts = datetime(2024, 3, 15, 10, 30, tzinfo=timezone.utc)
@@ -566,7 +566,7 @@ class TestEvictionProcessor:
     async def test_preserves_request_instructions(self):
         """Evicted ModelRequest preserves the original instructions."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         request = ModelRequest(
@@ -584,7 +584,7 @@ class TestEvictionProcessor:
     async def test_multiple_messages_mixed(self):
         """Processes multiple messages correctly, only evicting large tool outputs."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         messages: list[ModelMessage] = [
@@ -626,7 +626,7 @@ class TestEvictionProcessor:
     async def test_empty_messages(self):
         """Empty message list returns empty."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend)
+        processor = EvictionProcessor(backend=ensure_async(backend))
         ctx = _make_ctx(backend)
         result = await processor(ctx, [])
         assert result == []
@@ -635,7 +635,7 @@ class TestEvictionProcessor:
     async def test_unmodified_request_not_reconstructed(self):
         """Requests with no evictions return the original object."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10000)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10000)
         ctx = _make_ctx(backend)
 
         original = _make_request_with_tool_return("small content")
@@ -654,7 +654,7 @@ class TestResolveBackend:
         creation_backend = StateBackend()
         runtime_backend = StateBackend()
 
-        processor = EvictionProcessor(backend=creation_backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(creation_backend), token_limit=10)
         ctx = _make_ctx(runtime_backend)
 
         large_content = "x" * 500
@@ -665,17 +665,17 @@ class TestResolveBackend:
         await processor(ctx, messages)
 
         # File should be in RUNTIME backend, not creation backend
-        evicted = runtime_backend.read_bytes("/large_tool_results/call_rt")
+        evicted = runtime_backend._read_bytes("/large_tool_results/call_rt")
         assert evicted == large_content.encode()
 
         # Creation backend should NOT have the file
-        assert creation_backend.read_bytes("/large_tool_results/call_rt") == b""
+        assert creation_backend._read_bytes("/large_tool_results/call_rt") == b""
 
     @pytest.mark.anyio
     async def test_falls_back_to_self_backend(self):
         """Falls back to self.backend when deps has no backend attribute."""
         creation_backend = StateBackend()
-        processor = EvictionProcessor(backend=creation_backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(creation_backend), token_limit=10)
         ctx = _make_ctx_no_backend()
 
         large_content = "x" * 500
@@ -686,7 +686,7 @@ class TestResolveBackend:
         await processor(ctx, messages)
 
         # File should be in creation (fallback) backend
-        evicted = creation_backend.read_bytes("/large_tool_results/call_fb")
+        evicted = creation_backend._read_bytes("/large_tool_results/call_fb")
         assert evicted == large_content.encode()
 
 
@@ -737,7 +737,7 @@ class TestOnEvictionCallback:
         def on_eviction(tool_name: str, file_path: str, orig: int, preview: int) -> None:
             calls.append((tool_name, file_path, orig, preview))
 
-        processor = EvictionProcessor(backend=backend, token_limit=10, on_eviction=on_eviction)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10, on_eviction=on_eviction)
         ctx = _make_ctx(backend)
 
         large_content = _make_large_content(20)
@@ -759,7 +759,7 @@ class TestOnEvictionCallback:
         async def on_eviction(tool_name: str, file_path: str, orig: int, preview: int) -> None:
             calls.append(tool_name)
 
-        processor = EvictionProcessor(backend=backend, token_limit=10, on_eviction=on_eviction)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10, on_eviction=on_eviction)
         ctx = _make_ctx(backend)
 
         large_content = _make_large_content(20)
@@ -774,7 +774,7 @@ class TestOnEvictionCallback:
         """on_eviction is NOT called when content is small."""
         backend = StateBackend()
         cb = MagicMock()
-        processor = EvictionProcessor(backend=backend, token_limit=100, on_eviction=cb)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=100, on_eviction=cb)
         ctx = _make_ctx(backend)
 
         messages: list[ModelMessage] = [_make_request_with_tool_return("small")]
@@ -872,7 +872,7 @@ class TestEvictionPreviewFormat:
     async def test_preview_contains_head_and_tail(self):
         """Eviction preview shows head and tail lines of original content."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10, head_lines=3, tail_lines=3)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10, head_lines=3, tail_lines=3)
         ctx = _make_ctx(backend)
 
         lines = [f"line_{i}" for i in range(20)]
@@ -901,7 +901,7 @@ class TestEvictionPreviewFormat:
     async def test_evicted_file_readable(self):
         """Evicted file content matches the original tool output."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         original_content = _make_large_content(50)
@@ -912,7 +912,7 @@ class TestEvictionPreviewFormat:
         await processor(ctx, messages)
 
         # Read back from backend
-        stored = backend.read_bytes("/large_tool_results/call_read")
+        stored = backend._read_bytes("/large_tool_results/call_read")
         assert stored.decode() == original_content
 
 
@@ -923,7 +923,7 @@ class TestEdgeCases:
     async def test_tool_call_id_with_special_chars(self):
         """Tool call IDs with special characters are sanitized in file paths."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         messages: list[ModelMessage] = [
@@ -940,7 +940,7 @@ class TestEdgeCases:
     async def test_content_exactly_at_threshold(self):
         """Content exactly at the threshold is NOT evicted (uses <=)."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)  # 40 chars
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)  # 40 chars
         ctx = _make_ctx(backend)
 
         exact_content = "x" * 40  # Exactly at threshold
@@ -957,7 +957,7 @@ class TestEdgeCases:
     async def test_content_one_over_threshold(self):
         """Content one char over the threshold IS evicted."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)  # 40 chars
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)  # 40 chars
         ctx = _make_ctx(backend)
 
         over_content = "x" * 41  # One over threshold
@@ -974,7 +974,7 @@ class TestEdgeCases:
     async def test_request_with_only_user_prompt(self):
         """Request with only UserPromptPart passes through unchanged."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         request = ModelRequest(
@@ -990,7 +990,7 @@ class TestEdgeCases:
     async def test_model_response_with_tool_call(self):
         """ModelResponse containing ToolCallPart is not processed (not ModelRequest)."""
         backend = StateBackend()
-        processor = EvictionProcessor(backend=backend, token_limit=10)
+        processor = EvictionProcessor(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         response = ModelResponse(
@@ -1029,7 +1029,7 @@ class TestEvictionCapability:
     async def test_small_result_unchanged(self):
         """Results below threshold pass through unchanged."""
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=100)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=100)
         ctx = _make_ctx(backend)
 
         result = await cap.after_tool_execute(
@@ -1045,7 +1045,7 @@ class TestEvictionCapability:
     async def test_large_result_evicted(self):
         """Results above threshold are saved to file and replaced with preview."""
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=10)  # 40 chars
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10)  # 40 chars
         ctx = _make_ctx(backend)
 
         large = _make_large_content(20)
@@ -1060,7 +1060,7 @@ class TestEvictionCapability:
         assert "Tool result too large" in result
         assert "/large_tool_results/call_big" in result
         # File was written
-        evicted = backend.read_bytes("/large_tool_results/call_big")
+        evicted = backend._read_bytes("/large_tool_results/call_big")
         assert evicted == large.encode()
 
     @pytest.mark.anyio
@@ -1068,7 +1068,7 @@ class TestEvictionCapability:
         """Resolves backend from ctx.deps over fallback."""
         fallback = StateBackend()
         deps_backend = StateBackend()
-        cap = EvictionCapability(backend=fallback, token_limit=10)
+        cap = EvictionCapability(backend=ensure_async(fallback), token_limit=10)
         ctx = _make_ctx(deps_backend)
 
         large = "x" * 500
@@ -1081,8 +1081,8 @@ class TestEvictionCapability:
         )
 
         # Written to deps_backend, not fallback
-        assert deps_backend.read_bytes("/large_tool_results/call_deps") not in (None, b"")
-        assert fallback.read_bytes("/large_tool_results/call_deps") in (None, b"")
+        assert deps_backend._read_bytes("/large_tool_results/call_deps") not in (None, b"")
+        assert fallback._read_bytes("/large_tool_results/call_deps") in (None, b"")
 
     @pytest.mark.anyio
     async def test_no_backend_passes_through(self):
@@ -1105,7 +1105,7 @@ class TestEvictionCapability:
         """on_eviction callback is invoked on eviction."""
         backend = StateBackend()
         callback = MagicMock()
-        cap = EvictionCapability(backend=backend, token_limit=10, on_eviction=callback)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10, on_eviction=callback)
         ctx = _make_ctx(backend)
 
         await cap.after_tool_execute(
@@ -1131,7 +1131,7 @@ class TestEvictionCapability:
             return WriteResult(path=path, error="disk full")
 
         backend.write = failing_write
-        cap = EvictionCapability(backend=backend, token_limit=10)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         large = "x" * 500
@@ -1153,7 +1153,7 @@ class TestEvictionCapability:
         async def async_cb(tool_name: str, file_path: str, orig: int, preview: int) -> None:
             called_with.append((tool_name, file_path, orig, preview))
 
-        cap = EvictionCapability(backend=backend, token_limit=10, on_eviction=async_cb)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10, on_eviction=async_cb)
         ctx = _make_ctx(backend)
 
         await cap.after_tool_execute(
@@ -1172,7 +1172,7 @@ class TestEvictionCapability:
     async def test_dict_result_evicted(self):
         """Non-string results (dicts) are also evicted when large."""
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=10)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         large_dict = {"data": "x" * 500}
@@ -1207,7 +1207,7 @@ class TestEvictionCapabilityToolReturn:
         from pydantic_ai.messages import BinaryContent, ToolReturn
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=10)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         screenshot = BinaryContent(data=b"\xff\xd8" + b"x" * 1024, media_type="image/jpeg")
@@ -1230,7 +1230,7 @@ class TestEvictionCapabilityToolReturn:
         # content (with the BinaryContent) is preserved as-is
         assert result.content == original.content
         # Backend was not asked to store anything (no eviction)
-        assert backend.read_bytes("/large_tool_results/call_screenshot") in (None, b"")
+        assert backend._read_bytes("/large_tool_results/call_screenshot") in (None, b"")
 
     @pytest.mark.anyio
     async def test_toolreturn_evicts_only_return_value(self):
@@ -1238,7 +1238,7 @@ class TestEvictionCapabilityToolReturn:
         from pydantic_ai.messages import BinaryContent, ToolReturn
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=10)  # 40 chars
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10)  # 40 chars
         ctx = _make_ctx(backend)
 
         large_text = _make_large_content(20)
@@ -1266,7 +1266,7 @@ class TestEvictionCapabilityToolReturn:
         # metadata is preserved
         assert result.metadata == {"trace_id": "abc"}
         # The text value was actually written to the backend
-        assert backend.read_bytes("/large_tool_results/call_big_tr") == large_text.encode()
+        assert backend._read_bytes("/large_tool_results/call_big_tr") == large_text.encode()
 
     @pytest.mark.anyio
     async def test_toolreturn_small_passes_through(self):
@@ -1274,7 +1274,7 @@ class TestEvictionCapabilityToolReturn:
         from pydantic_ai.messages import BinaryContent, ToolReturn
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=1000)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=1000)
         ctx = _make_ctx(backend)
 
         screenshot = BinaryContent(data=b"x" * 32, media_type="image/jpeg")
@@ -1297,7 +1297,7 @@ class TestEvictionCapabilityToolReturn:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=10)  # 40-char threshold
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10)  # 40-char threshold
         ctx = _make_ctx(backend)
 
         image = BinaryContent(data=b"\x89PNG" + b"\x00" * 100_000, media_type="image/png")
@@ -1313,7 +1313,7 @@ class TestEvictionCapabilityToolReturn:
         assert result is image
         assert isinstance(result, BinaryContent)
         # Nothing was written to the eviction path.
-        assert backend.read_bytes("/large_tool_results/call_bare_img") in (None, b"")
+        assert backend._read_bytes("/large_tool_results/call_bare_img") in (None, b"")
 
     @pytest.mark.anyio
     async def test_list_with_binary_content_returned_unchanged(self):
@@ -1322,7 +1322,7 @@ class TestEvictionCapabilityToolReturn:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, token_limit=10)
+        cap = EvictionCapability(backend=ensure_async(backend), token_limit=10)
         ctx = _make_ctx(backend)
 
         image = BinaryContent(data=b"\xff\xd8" + b"x" * 100_000, media_type="image/jpeg")
@@ -1336,7 +1336,7 @@ class TestEvictionCapabilityToolReturn:
         )
 
         assert result is original
-        assert backend.read_bytes("/large_tool_results/call_list_img") in (None, b"")
+        assert backend._read_bytes("/large_tool_results/call_list_img") in (None, b"")
 
 
 # ---------------------------------------------------------------------------
@@ -1401,7 +1401,7 @@ class TestBinaryContentRetention:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=2)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=2)
         ctx = _make_ctx(backend)
 
         # 4 messages, each with one image - newest last
@@ -1435,7 +1435,7 @@ class TestBinaryContentRetention:
         # Pruned binaries were stored to backend with deterministic paths
         first_bin = BinaryContent(data=b"image-0-bytes" * 8, media_type="image/jpeg")
         path = f"/large_tool_results/binary_{first_bin.identifier}.jpg"
-        assert backend.read_bytes(path) == b"image-0-bytes" * 8
+        assert backend._read_bytes(path) == b"image-0-bytes" * 8
 
         # Older messages now contain the text reference
         first_part = new_messages[0].parts[0]
@@ -1449,7 +1449,7 @@ class TestBinaryContentRetention:
     async def test_under_limit_unchanged(self):
         """When binaries are at or under the limit, messages pass through unchanged."""
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=3)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=3)
         ctx = _make_ctx(backend)
 
         messages: list[ModelMessage] = [
@@ -1471,7 +1471,7 @@ class TestBinaryContentRetention:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=None)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=None)
         ctx = _make_ctx(backend)
 
         messages: list[ModelMessage] = [
@@ -1493,7 +1493,7 @@ class TestBinaryContentRetention:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=1)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=1)
         ctx = _make_ctx(backend)
 
         old_bytes = b"old-image-bytes" * 4
@@ -1526,7 +1526,7 @@ class TestBinaryContentRetention:
         # Stored bytes match the original BinaryContent.data
         old_bin = BinaryContent(data=old_bytes, media_type="image/jpeg")
         path = f"/large_tool_results/binary_{old_bin.identifier}.jpg"
-        assert backend.read_bytes(path) == old_bytes
+        assert backend._read_bytes(path) == old_bytes
 
         # ToolReturnPart metadata is preserved
         assert old_part.tool_name == "browser_screenshot"
@@ -1565,7 +1565,7 @@ class TestBinaryContentRetention:
             return WriteResult(path=path, error="disk full")
 
         backend.write = failing_write
-        cap = EvictionCapability(backend=backend, max_binary_content=1)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=1)
         ctx = _make_ctx(backend)
 
         messages: list[ModelMessage] = [
@@ -1675,7 +1675,7 @@ class TestBinaryRetentionEdgeCases:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=1)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=1)
         ctx = _make_ctx(backend)
 
         old_bytes = b"old-bare-binary"
@@ -1721,7 +1721,7 @@ class TestBinaryRetentionEdgeCases:
         # Stored bytes match the original
         old_bin = BinaryContent(data=old_bytes, media_type="image/png")
         path = f"/large_tool_results/binary_{old_bin.identifier}.png"
-        assert backend.read_bytes(path) == old_bytes
+        assert backend._read_bytes(path) == old_bytes
 
     @pytest.mark.anyio
     async def test_bare_binary_under_limit_unchanged(self):
@@ -1729,7 +1729,7 @@ class TestBinaryRetentionEdgeCases:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=3)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=3)
         ctx = _make_ctx(backend)
 
         msg = ModelRequest(
@@ -1760,7 +1760,7 @@ class TestBinaryRetentionEdgeCases:
             return WriteResult(path=path, error="disk full")
 
         backend.write = failing_write
-        cap = EvictionCapability(backend=backend, max_binary_content=1)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=1)
         ctx = _make_ctx(backend)
 
         old_bin = BinaryContent(data=b"old-bare", media_type="image/png")
@@ -1812,7 +1812,7 @@ class TestBinaryRetentionEdgeCases:
             return WriteResult(path=path, error="disk full")
 
         backend.write = failing_write
-        cap = EvictionCapability(backend=backend, max_binary_content=1)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=1)
         ctx = _make_ctx(backend)
 
         msg_old = ModelRequest(
@@ -1858,7 +1858,7 @@ class TestBinaryRetentionEdgeCases:
         from pydantic_ai.messages import RetryPromptPart
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=1)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=1)
         ctx = _make_ctx(backend)
 
         retry_msg = ModelRequest(
@@ -1878,7 +1878,7 @@ class TestBinaryRetentionEdgeCases:
         from pydantic_ai.messages import BinaryContent
 
         backend = StateBackend()
-        cap = EvictionCapability(backend=backend, max_binary_content=1)
+        cap = EvictionCapability(backend=ensure_async(backend), max_binary_content=1)
         ctx = _make_ctx(backend)
 
         # A dict-form content that should not be touched, alongside a binary

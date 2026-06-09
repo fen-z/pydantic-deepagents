@@ -873,8 +873,8 @@ def create_deep_agent(  # noqa: C901
             image_support=True,
             edit_format=edit_format,  # type: ignore[arg-type,unused-ignore]
         )
-        _set_toolset_retries(console_toolset, retries)
-        all_toolsets.append(console_toolset)
+        _set_toolset_retries(console_toolset, retries)  # type: ignore[arg-type,unused-ignore]
+        all_toolsets.append(console_toolset)  # type: ignore[arg-type,unused-ignore]
 
     _subagent_task_manager: Any | None = None
     subagent_toolset: Any | None = None
@@ -1425,7 +1425,7 @@ async def run_with_files(
     """
     # Upload files (batch)
     if files:
-        deps.upload_files(files, upload_dir=upload_dir)
+        await deps.upload_files(files, upload_dir=upload_dir)
 
     # Run agent
     result = await agent.run(query, deps=deps)
