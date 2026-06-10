@@ -13,13 +13,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 
 from pydantic_deep.goal import (
     DEFAULT_GOAL_MODEL,
     GoalEvaluation,
     GoalEvaluator,
     GoalState,
-    _extract_reason,
     _first_user_text,
     _format_duration,
     _trunc,
@@ -27,17 +27,12 @@ from pydantic_deep.goal import (
     format_goal_status,
     goal_continue_directive,
     parse_goal_command,
-    parse_verdict,
 )
 
 
-def _reply_model(text: str) -> FunctionModel:
-    """A FunctionModel that always replies with the given text."""
-
-    def _fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content=text)])
-
-    return FunctionModel(_fn)
+def _verdict_model(**args: object) -> TestModel:
+    """A TestModel that emits the given Verdict fields as structured output."""
+    return TestModel(custom_output_args=args)
 
 
 def _raising_model() -> FunctionModel:
@@ -67,64 +62,6 @@ class TestParseGoalCommand:
         action, condition = parse_goal_command(long)
         assert action == "set"
         assert len(condition) == 4000
-
-
-class TestParseVerdict:
-    def test_empty(self) -> None:
-        v = parse_verdict("   ")
-        assert v.met is False
-        assert "no output" in v.reason.lower()
-
-    def test_yes_with_reason(self) -> None:
-        v = parse_verdict("YES - all tests pass")
-        assert v.met is True
-        assert v.reason == "all tests pass"
-
-    def test_no_with_reason(self) -> None:
-        v = parse_verdict("NO, the tests have not been run")
-        assert v.met is False
-        assert v.reason == "the tests have not been run"
-
-    @pytest.mark.parametrize("word", ["met", "done", "true", "complete", "achieved", "satisfied"])
-    def test_met_prefixes(self, word: str) -> None:
-        assert parse_verdict(f"{word}: looks good").met is True
-
-    @pytest.mark.parametrize("word", ["not", "false", "incomplete", "unmet", "failed"])
-    def test_not_met_prefixes(self, word: str) -> None:
-        assert parse_verdict(f"{word}: nope").met is False
-
-    def test_yes_bare_default_reason(self) -> None:
-        v = parse_verdict("YES")
-        assert v.met is True
-        assert v.reason == "Condition met."
-
-    def test_no_bare_default_reason(self) -> None:
-        v = parse_verdict("NO")
-        assert v.met is False
-        assert v.reason == "Condition not yet met."
-
-    def test_multiline_reason_falls_back_to_rest(self) -> None:
-        v = parse_verdict("YES\nEvery test passed cleanly")
-        assert v.met is True
-        assert v.reason == "Every test passed cleanly"
-
-    def test_ambiguous_is_not_met(self) -> None:
-        v = parse_verdict("Maybe, it depends on the deploy")
-        assert v.met is False
-        assert v.reason.startswith("Maybe")
-
-    def test_ambiguous_reason_truncated(self) -> None:
-        v = parse_verdict("perhaps " * 100)
-        assert v.met is False
-        assert len(v.reason) <= 200
-
-
-class TestExtractReason:
-    def test_no_verdict_word_returns_head(self) -> None:
-        assert _extract_reason("just some text", "rest") == "just some text"
-
-    def test_falls_back_to_rest_when_head_only_verdict(self) -> None:
-        assert _extract_reason("YES", "the rest line") == "the rest line"
 
 
 class TestTranscript:
@@ -280,18 +217,49 @@ def test_goal_continue_directive() -> None:
 
 class TestGoalEvaluator:
     async def test_evaluate_met(self) -> None:
-        evaluator = GoalEvaluator(model=_reply_model("YES - everything passes"))
+        evaluator = GoalEvaluator(model=_verdict_model(ok=True, reason="everything passes"))
         msgs: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content="pass tests")])]
         result = await evaluator.evaluate("tests pass", msgs)
         assert result.met is True
+        assert result.impossible is False
         assert result.reason == "everything passes"
-        assert result.output_tokens > 0
 
     async def test_evaluate_not_met(self) -> None:
-        evaluator = GoalEvaluator(model=_reply_model("NO - still failing"))
+        evaluator = GoalEvaluator(model=_verdict_model(ok=False, reason="still failing"))
         result = await evaluator.evaluate("tests pass", [])
         assert result.met is False
+        assert result.impossible is False
         assert result.reason == "still failing"
+
+    async def test_evaluate_impossible(self) -> None:
+        evaluator = GoalEvaluator(
+            model=_verdict_model(ok=False, impossible=True, reason="needs a GPU we lack")
+        )
+        result = await evaluator.evaluate("train on GPU", [])
+        assert result.met is False
+        assert result.impossible is True
+        assert "GPU" in result.reason
+
+    async def test_evaluate_impossible_dropped_when_ok(self) -> None:
+        # A met goal can never also be impossible.
+        evaluator = GoalEvaluator(model=_verdict_model(ok=True, impossible=True, reason="done"))
+        result = await evaluator.evaluate("x", [])
+        assert result.met is True
+        assert result.impossible is False
+
+    async def test_evaluate_default_reason_met(self) -> None:
+        result = await GoalEvaluator(model=_verdict_model(ok=True, reason="")).evaluate("x", [])
+        assert result.reason == "Condition met."
+
+    async def test_evaluate_default_reason_not_met(self) -> None:
+        result = await GoalEvaluator(model=_verdict_model(ok=False, reason="")).evaluate("x", [])
+        assert result.reason == "Condition not yet met."
+
+    async def test_evaluate_default_reason_impossible(self) -> None:
+        result = await GoalEvaluator(
+            model=_verdict_model(ok=False, impossible=True, reason="")
+        ).evaluate("x", [])
+        assert "cannot be satisfied" in result.reason
 
     async def test_evaluate_handles_exception(self) -> None:
         evaluator = GoalEvaluator(model=_raising_model())
@@ -300,86 +268,14 @@ class TestGoalEvaluator:
         assert "Evaluator error" in result.reason
 
     async def test_agent_is_cached(self) -> None:
-        evaluator = GoalEvaluator(model=_reply_model("YES"))
-        first = evaluator._get_agent()
-        second = evaluator._get_agent()
-        assert first is second
+        evaluator = GoalEvaluator(model=_verdict_model(ok=True, reason="x"))
+        assert evaluator._get_agent() is evaluator._get_agent()
 
     def test_default_model_constant(self) -> None:
         assert isinstance(DEFAULT_GOAL_MODEL, str)
         assert GoalEvaluator().model == DEFAULT_GOAL_MODEL
 
 
-class TestJsonVerdict:
-    """parse_verdict prefers a structured JSON verdict (with `impossible`)."""
-
-    def test_json_ok_true(self) -> None:
-        v = parse_verdict('{"ok": true, "reason": "all tests pass"}')
-        assert v.met is True
-        assert v.impossible is False
-        assert v.reason == "all tests pass"
-
-    def test_json_ok_false(self) -> None:
-        v = parse_verdict('{"ok": false, "reason": "still failing"}')
-        assert v.met is False
-        assert v.impossible is False
-        assert v.reason == "still failing"
-
-    def test_json_impossible(self) -> None:
-        v = parse_verdict('{"ok": false, "impossible": true, "reason": "needs network access"}')
-        assert v.met is False
-        assert v.impossible is True
-        assert "network" in v.reason
-
-    def test_json_impossible_dropped_when_ok(self) -> None:
-        # Contradictory input: a met goal can't also be impossible.
-        v = parse_verdict('{"ok": true, "impossible": true, "reason": "done"}')
-        assert v.met is True
-        assert v.impossible is False
-
-    def test_json_default_reason_met(self) -> None:
-        v = parse_verdict('{"ok": true}')
-        assert v.met is True
-        assert v.reason == "Condition met."
-
-    def test_json_default_reason_not_met(self) -> None:
-        v = parse_verdict('{"ok": false}')
-        assert v.met is False
-        assert v.impossible is False
-        assert v.reason == "Condition not yet met."
-
-    def test_json_default_reason_impossible(self) -> None:
-        v = parse_verdict('{"ok": false, "impossible": true}')
-        assert v.impossible is True
-        assert "cannot be satisfied" in v.reason
-
-    def test_json_wrapped_in_prose(self) -> None:
-        v = parse_verdict('Verdict: {"ok": true, "reason": "green"}. Done.')
-        assert v.met is True
-        assert v.reason == "green"
-
-    def test_invalid_json_in_braces_falls_back(self) -> None:
-        # Braces present but not decodable → lenient free-text fallback.
-        v = parse_verdict("NO {not valid json}")
-        assert v.met is False
-        assert "not valid json" in v.reason
-
-    def test_empty_json_object_falls_back(self) -> None:
-        # Decodes, but lacks the required "ok" key → free-text fallback.
-        v = parse_verdict("NO {}")
-        assert v.met is False
-
-
 class TestGoalEvaluationImpossible:
     def test_default_false(self) -> None:
         assert GoalEvaluation(met=False, reason="x").impossible is False
-
-
-class TestEvaluatorImpossible:
-    async def test_evaluate_propagates_impossible(self) -> None:
-        model = _reply_model('{"ok": false, "impossible": true, "reason": "needs a GPU"}')
-        evaluator = GoalEvaluator(model=model)
-        result = await evaluator.evaluate("train on GPU", [])
-        assert result.met is False
-        assert result.impossible is True
-        assert "GPU" in result.reason

@@ -129,7 +129,6 @@ from pydantic_deep.goal import (
     format_goal_status,
     goal_continue_directive,
     parse_goal_command,
-    parse_verdict,
 )
 from pydantic_deep.mcp import (
     BUILTIN_MCP_NAMES,
@@ -311,7 +310,6 @@ __all__ = [
     "format_goal_status",
     "goal_continue_directive",
     "parse_goal_command",
-    "parse_verdict",
     # MCP (Model Context Protocol) client support
     "MCPServerConfig",
     "MCPAuth",

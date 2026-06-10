@@ -35,12 +35,11 @@ Example:
 
 from __future__ import annotations
 
-import json
 import logging
-import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Literal
 
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -64,50 +63,58 @@ MAX_GOAL_CONDITION_CHARS = 4000
 # Words accepted as the argument to clear an active goal early.
 GOAL_CLEAR_ALIASES = frozenset({"clear", "stop", "off", "reset", "none", "cancel"})
 
-# Verdict-word prefixes the evaluator may use. Order is irrelevant; ``_MET`` is
-# checked before ``_NOT_MET`` and "incomplete" deliberately does not start with
-# "complete", so it falls through to the not-met set.
-_MET_PREFIXES = ("yes", "met", "done", "true", "complete", "achieved", "satisfied")
-_NOT_MET_PREFIXES = ("no", "not", "false", "incomplete", "unmet", "fail")
-
-_VERDICT_RE = re.compile(
-    r"^\s*(yes|no|not\s+met|not|met|done|true|false|complete|incomplete|"
-    r"achieved|satisfied|unmet|fail(?:ed)?)\b[\s:,.\-–—]*",
-    re.IGNORECASE,
-)
-
 GOAL_EVALUATOR_SYSTEM_PROMPT = (
     "You are a strict goal-completion evaluator for an autonomous coding agent. "
     "Judge whether the user's completion condition is satisfied using ONLY "
     "evidence already present in the conversation transcript — you cannot run "
     "commands or read files.\n\n"
-    "Respond with a single JSON object, exactly one of:\n"
-    '- {"ok": true, "reason": "<quote the transcript evidence that satisfies it>"}\n'
-    '- {"ok": false, "reason": "<quote what is missing or blocking>"}\n'
-    '- {"ok": false, "impossible": true, "reason": "<why it can never be satisfied '
-    'here>"}\n\n'
-    "Rules:\n"
-    '- Quote specific transcript text in "reason" whenever possible.\n'
-    "- Missing, partial, or unverified evidence means ok=false. With no clear "
-    'evidence, return {"ok": false, "reason": "insufficient evidence in '
-    'transcript"}.\n'
-    "- The agent's own claim of success is evidence, not proof. Require the actual "
+    "Set ok=true only when the transcript contains clear, concrete evidence that "
+    "the condition is fully satisfied. Missing, partial, or unverified evidence "
+    "means ok=false; with no clear evidence, say so in the reason ('insufficient "
+    "evidence in transcript').\n\n"
+    "In `reason`, quote the specific transcript text that satisfies or blocks the "
+    "condition whenever possible, in one sentence.\n\n"
+    "The agent's own claim of success is evidence, not proof. Require the actual "
     "artifact (command output, exit code, test summary, file state). Be alert to "
     "the agent weakening a check to pass it — editing assertions, skipping or "
-    "deleting tests, or narrowing scope does NOT satisfy the condition.\n"
-    '- Use "impossible": true only when the condition is genuinely unachievable '
-    "this session: self-contradictory, dependent on an unavailable resource or "
-    "capability, or the agent has exhausted reasonable approaches and shown it "
-    "cannot be done. Independently confirm this — do not defer to the agent's "
-    'self-assessment. When in doubt, omit "impossible".'
+    "deleting tests, or narrowing scope does NOT satisfy the condition.\n\n"
+    "Set impossible=true (with ok=false) only when the condition is genuinely "
+    "unachievable this session: self-contradictory, dependent on an unavailable "
+    "resource or capability, or the agent has exhausted reasonable approaches and "
+    "shown it cannot be done. Independently confirm this — do not defer to the "
+    "agent's self-assessment. When in doubt, leave impossible=false."
 )
 
 GOAL_EVALUATOR_PROMPT = (
     "Goal condition:\n{condition}\n\n"
     "Conversation transcript (most recent last):\n{transcript}\n\n"
     "Decide whether the goal condition is fully satisfied by evidence in the "
-    "transcript, and reply with the JSON object described in your instructions."
+    "transcript."
 )
+
+
+class Verdict(BaseModel):
+    """Structured evaluator output, enforced via pydantic-ai ``output_type``.
+
+    Using a typed output schema removes all reply-text parsing: the model is
+    constrained to produce these fields (and pydantic-ai retries on malformed
+    output), so there is no ``YES``/``NO`` heuristic to misfire.
+    """
+
+    ok: bool = Field(
+        description="True only when the condition is fully satisfied by transcript evidence."
+    )
+    impossible: bool = Field(
+        default=False,
+        description=(
+            "True only when the condition is genuinely unachievable this session. "
+            "Must be False whenever ok is True."
+        ),
+    )
+    reason: str = Field(
+        default="",
+        description="One sentence, quoting transcript evidence where possible.",
+    )
 
 
 @dataclass(frozen=True)
@@ -199,78 +206,13 @@ def parse_goal_command(arg: str) -> tuple[Literal["status", "clear", "set"], str
     return ("set", stripped[:MAX_GOAL_CONDITION_CHARS])
 
 
-def _extract_reason(head: str, rest: str) -> str:
-    """Strip the leading verdict word from ``head`` and fall back to ``rest``."""
-    match = _VERDICT_RE.match(head)
-    remainder = head[match.end() :].strip() if match else head.strip()
-    if not remainder:
-        remainder = rest.strip()
-    return remainder
-
-
-def _parse_json_verdict(raw: str) -> GoalEvaluation | None:
-    """Parse a structured ``{"ok", "impossible", "reason"}`` verdict.
-
-    Returns ``None`` when ``raw`` has no usable JSON object (so the caller falls
-    back to lenient free-text parsing). Tolerates prose or code fences around
-    the object by extracting the first ``{...}`` block. ``impossible`` only ever
-    survives alongside ``ok is False``.
-    """
-    block = re.search(r"\{.*\}", raw, re.DOTALL)
-    if block is None:
-        return None
-    try:
-        data = json.loads(block.group(0))
-    except ValueError:
-        return None
-    # A ``{...}``-anchored match always decodes to a JSON object (dict); guard
-    # only against the object lacking the required verdict key.
-    if "ok" not in data:
-        return None
-
-    ok = bool(data.get("ok"))
-    impossible = (not ok) and bool(data.get("impossible", False))
-    reason = str(data.get("reason", "")).strip()
-    if not reason:
-        if ok:
-            reason = "Condition met."
-        elif impossible:
-            reason = "Condition cannot be satisfied this session."
-        else:
-            reason = "Condition not yet met."
-    return GoalEvaluation(met=ok, reason=reason, impossible=impossible)
-
-
-def parse_verdict(text: str) -> GoalEvaluation:
-    """Parse an evaluator reply into a :class:`GoalEvaluation`.
-
-    Prefers a structured JSON verdict (``{"ok": ..., "impossible": ...,
-    "reason": ...}``) — the shape the evaluator is prompted to emit — and falls
-    back to lenient free-text parsing (a leading ``YES``/``NO`` word) for models
-    that ignore the JSON instruction. Parsing is fail-safe: an empty or
-    ambiguous reply is treated as *not met* so the loop keeps working rather
-    than declaring premature success.
-    """
-    raw = text.strip()
-    if not raw:
-        return GoalEvaluation(met=False, reason="Evaluator returned no output.")
-
-    structured = _parse_json_verdict(raw)
-    if structured is not None:
-        return structured
-
-    first, _, rest = raw.partition("\n")
-    head = first.strip()
-    lowered = head.lower()
-
-    reason = _extract_reason(head, rest)
-
-    if lowered.startswith(_MET_PREFIXES):
-        return GoalEvaluation(met=True, reason=reason or "Condition met.")
-    if lowered.startswith(_NOT_MET_PREFIXES):
-        return GoalEvaluation(met=False, reason=reason or "Condition not yet met.")
-    # Ambiguous: keep working, surfacing the raw reply as the reason.
-    return GoalEvaluation(met=False, reason=raw[:200])
+def _default_reason(met: bool, impossible: bool) -> str:
+    """Fallback reason when the evaluator returns an empty ``reason`` string."""
+    if met:
+        return "Condition met."
+    if impossible:
+        return "Condition cannot be satisfied this session."
+    return "Condition not yet met."
 
 
 def _first_user_text(messages: list[ModelMessage]) -> str | None:
@@ -397,13 +339,14 @@ class GoalEvaluator:
     max_context_messages: int = 12
     max_chars_per_part: int = 600
 
-    _agent: Agent[None, str] | None = field(default=None, init=False, repr=False)
+    _agent: Agent[None, Verdict] | None = field(default=None, init=False, repr=False)
 
-    def _get_agent(self) -> Agent[None, str]:
+    def _get_agent(self) -> Agent[None, Verdict]:
         if self._agent is None:
             self._agent = Agent(
                 model=self.model,
                 system_prompt=GOAL_EVALUATOR_SYSTEM_PROMPT,
+                output_type=Verdict,
             )
         return self._agent
 
@@ -414,9 +357,10 @@ class GoalEvaluator:
     ) -> GoalEvaluation:
         """Evaluate ``condition`` against the conversation ``messages``.
 
-        On any failure the evaluation defaults to *not met* (with an error
-        reason) so a transient evaluator hiccup keeps the agent working rather
-        than declaring premature success.
+        The model is constrained to a :class:`Verdict` via ``output_type`` (no
+        reply-text parsing). On any failure the evaluation defaults to *not met*
+        (with an error reason) so a transient evaluator hiccup keeps the agent
+        working rather than declaring premature success.
         """
         transcript = build_goal_transcript(
             messages, self.max_context_messages, self.max_chars_per_part
@@ -432,10 +376,14 @@ class GoalEvaluator:
             )
             return GoalEvaluation(met=False, reason="Evaluator error; continuing.")
 
-        verdict = parse_verdict(result.output)
+        verdict = result.output
+        met = verdict.ok
+        impossible = (not met) and verdict.impossible
         usage = result.usage
-        return replace(
-            verdict,
+        return GoalEvaluation(
+            met=met,
+            reason=verdict.reason.strip() or _default_reason(met, impossible),
+            impossible=impossible,
             input_tokens=usage.input_tokens or 0,
             output_tokens=usage.output_tokens or 0,
         )
@@ -450,9 +398,9 @@ __all__ = [
     "GoalEvaluation",
     "GoalEvaluator",
     "GoalState",
+    "Verdict",
     "build_goal_transcript",
     "format_goal_status",
     "goal_continue_directive",
     "parse_goal_command",
-    "parse_verdict",
 ]
