@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.30] - 2026-06-18
+
+### Fixed
+
+- **`subagent_extra_toolsets` now reaches immediate (depth-1) subagents** ([#141](https://github.com/vstorm-co/pydantic-deepagents/issues/141)) (`pydantic_deep/agent.py`). The parameter was forwarded into the subagent factory's `create_deep_agent()` call, but the factory builds subagents with `include_subagents=False`, so the toolsets were only ever consumed by nested sub-agents (depth 2+) — the immediate subagent never received them. The extra toolsets are now injected into each subagent's config `toolsets` (new `_inject_subagent_extra_toolsets()`, mirroring the context/memory injection helpers) and the factory reads them back via `extra_toolsets=`, so depth-1 subagents get the toolsets as intended.
+- **`write_todos` now persists to `deps.todos`** ([#148](https://github.com/vstorm-co/pydantic-deepagents/issues/148)) (`pydantic_deep/agent.py`). The todo tools are `tool_plain`, so the shared `_DepsTodoProxy` is their only channel to the per-run deps. The proxy was bound in `dynamic_instructions`, which pydantic-ai resolves in a throwaway `contextvars` context, so `write_todos` saw no deps and silently dropped every write (`read_todos` returned "No todos", `deps.todos` stayed `[]`). A new `_TodoProxyBinder` capability re-binds the proxy in `before_tool_execute` — in the tool's own context — so writes land while keeping per-run isolation.
+- **`--verbose` mode now runs tool calls** ([#147](https://github.com/vstorm-co/pydantic-deepagents/issues/147)) (`apps/cli/run.py`). `_run_verbose` broke out of the model-request stream on `FinalResultEvent` and abandoned it mid-flight, truncating the model turn so the agent never reached its tool-call nodes — `--verbose` printed a summary but applied no fixes. The stream now iterates to natural completion, matching the non-verbose path, so tool calls execute.
+
+### Changed
+
+- **Bumped vstorm-co packages** ([#151](https://github.com/vstorm-co/pydantic-deepagents/pull/151), Renovate) (`pyproject.toml`). `pydantic-ai-backend` to `>=0.2.13` (Windows CRLF doubling fix in `LocalBackend.write()` / `edit()`), `pydantic-ai-todo` to `>=0.2.6` (`asyncpg` is now an optional `[postgres]` extra), and `summarization-pydantic-ai` to `>=0.1.8` (`ContextManagerCapability` compress hooks now reflect what actually happened).
+
 ## [0.3.29] - 2026-06-12
 
 ### Added
