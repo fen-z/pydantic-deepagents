@@ -244,8 +244,3 @@ disable_error_code = ["arg-type", "list-item", "abstract"]
 # Codespell configuration
 [tool.codespell]
 skip = ".git,.venv*,uv.lock,site,htmlcov,.coverage"
-
-# TODO: Remove before merge — needed until pydantic-ai-backend with
-# AsyncBackendProtocol / ensure_async is published to PyPI.
-[tool.uv.sources]
-pydantic-ai-backend = { path = "../pydantic-ai-backend", editable = true }
