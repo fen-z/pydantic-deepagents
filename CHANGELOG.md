@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.31] - 2026-06-22
+
+### Changed
+
+- **Migrated all backend I/O from the sync `BackendProtocol` to the async `AsyncBackendProtocol`** ([#142](https://github.com/vstorm-co/pydantic-deepagents/pull/142), closes [#129](https://github.com/vstorm-co/pydantic-deepagents/issues/129)). Backends implemented over the network (HTTP/gRPC/etc.) can now be natively async instead of being forced through `asyncio.run(...)`. `DeepAgentDeps.__post_init__` auto-wraps any sync backend with `ensure_async()` (from `pydantic-ai-backend`), so **existing sync backends like `StateBackend` / `LocalBackend` keep working unchanged** — consumer code can always `await backend.X()`. Hooks, forking internals, skills discovery, context files, memory, eviction, and the examples were all updated to the async API (`pydantic_deep/deps.py`, `capabilities/hooks.py`, `toolsets/forking/*`, `toolsets/skills/backend.py`, `toolsets/context.py`, `toolsets/memory.py`, `toolsets/liteparse.py`, `processors/eviction.py`).
+
+  **Breaking changes for code that touched the backend directly:**
+  - `DeepAgentDeps.upload_file()` and `upload_files()` are now `async` — callers must `await` them.
+  - `ctx.deps.backend` is now an `AsyncBackendProtocol` (a wrapping `AsyncBackendAdapter` for sync backends). Direct calls like `ctx.deps.backend.read_bytes(path)` must become `await ctx.deps.backend.read_bytes(path)`. Code that needs the raw sync backend (e.g. backend-specific attributes, `BranchOverlay`'s synchronous overlay ops) should use the new `unwrap_backend()` helper in `pydantic_deep/deps.py`.
+  - `load_memory()` and related memory helpers in `pydantic_deep/toolsets/memory.py` are now `async`.
+
+### Dependencies
+
+- **Bumped vstorm-co packages** ([#156](https://github.com/vstorm-co/pydantic-deepagents/pull/156), Renovate) (`pyproject.toml`). `pydantic-ai-backend` to `>=0.2.14` (async backend adapter support: `ensure_async`, `AsyncBackendProtocol` / `AsyncSandboxProtocol`, `AsyncBackendAdapter` / `AsyncSandboxAdapter` — the foundation the async migration above is built on), and `summarization-pydantic-ai` to `>=0.1.9` (`ContextManagerCapability.after_tool_execute` no longer stringifies a `ToolReturn`, so large binary tool results are no longer inlined and rejected by the provider).
+
 ## [0.3.30] - 2026-06-18
 
 ### Fixed
