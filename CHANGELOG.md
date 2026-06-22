@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.30] - 2026-06-18
+
+### Fixed
+
+- **`subagent_extra_toolsets` now reaches immediate (depth-1) subagents** ([#141](https://github.com/vstorm-co/pydantic-deepagents/issues/141)) (`pydantic_deep/agent.py`). The parameter was forwarded into the subagent factory's `create_deep_agent()` call, but the factory builds subagents with `include_subagents=False`, so the toolsets were only ever consumed by nested sub-agents (depth 2+) — the immediate subagent never received them. The extra toolsets are now injected into each subagent's config `toolsets` (new `_inject_subagent_extra_toolsets()`, mirroring the context/memory injection helpers) and the factory reads them back via `extra_toolsets=`, so depth-1 subagents get the toolsets as intended.
+- **`write_todos` now persists to `deps.todos`** ([#148](https://github.com/vstorm-co/pydantic-deepagents/issues/148)) (`pydantic_deep/agent.py`). The todo tools are `tool_plain`, so the shared `_DepsTodoProxy` is their only channel to the per-run deps. The proxy was bound in `dynamic_instructions`, which pydantic-ai resolves in a throwaway `contextvars` context, so `write_todos` saw no deps and silently dropped every write (`read_todos` returned "No todos", `deps.todos` stayed `[]`). A new `_TodoProxyBinder` capability re-binds the proxy in `before_tool_execute` — in the tool's own context — so writes land while keeping per-run isolation.
+- **`--verbose` mode now runs tool calls** ([#147](https://github.com/vstorm-co/pydantic-deepagents/issues/147)) (`apps/cli/run.py`). `_run_verbose` broke out of the model-request stream on `FinalResultEvent` and abandoned it mid-flight, truncating the model turn so the agent never reached its tool-call nodes — `--verbose` printed a summary but applied no fixes. The stream now iterates to natural completion, matching the non-verbose path, so tool calls execute.
+
+### Changed
+
+- **Bumped vstorm-co packages** ([#151](https://github.com/vstorm-co/pydantic-deepagents/pull/151), Renovate) (`pyproject.toml`). `pydantic-ai-backend` to `>=0.2.13` (Windows CRLF doubling fix in `LocalBackend.write()` / `edit()`), `pydantic-ai-todo` to `>=0.2.6` (`asyncpg` is now an optional `[postgres]` extra), and `summarization-pydantic-ai` to `>=0.1.8` (`ContextManagerCapability` compress hooks now reflect what actually happened).
+
+## [0.3.29] - 2026-06-12
+
+### Added
+
+- **Goal-completion loop — `/goal` (framework engine + CLI command)** (new `pydantic_deep/goal.py`, `apps/cli/goal.py`, wired into `apps/cli/screens/chat.py`). Set a completion condition and the agent keeps working toward it across turns without per-turn prompting — a port of Claude Code's [`/goal`](https://code.claude.com/docs/en/goal).
+  - **Framework.** `pydantic_deep/goal.py` is a provider/UI-agnostic engine. `GoalEvaluator` asks a small, fast model (default Haiku, matching the periodic-reminder tier) whether the condition is satisfied — judging *only* from the conversation transcript, never running tools, exactly like Claude Code. It returns a `GoalEvaluation(met, reason, …token counts)`. `GoalState` holds session-scoped state (condition, turns, achieved, last reason, cumulative evaluator tokens) with a hard `max_turns` safety cap so a vague condition can't loop forever. Pure helpers — `parse_goal_command` (set / clear / status, with `clear`/`stop`/`off`/`reset`/`none`/`cancel` aliases and the 4,000-char condition cap), `parse_verdict` (lenient YES/NO parsing that defaults to *not met* on ambiguity so the loop never declares premature success), `build_goal_transcript` (compact transcript that keeps assistant text and tool results as the evidence the evaluator judges), `goal_continue_directive`, and `format_goal_status` — let any CLI or headless driver wire the behaviour. All exported from the top-level package.
+  - **CLI.** New `/goal <condition>` command sets a goal and kicks the first turn immediately (the condition is the directive); `/goal` with no argument opens an input modal to type a condition (or, when a goal is already active, shows its status — condition, elapsed time, turns evaluated, evaluator tokens, latest reason); `/goal clear` (and aliases) drops it early, as does `/clear`. After each turn the stream worker evaluates the active goal off the saved history: when met it clears with a `✓ Goal achieved` toast, otherwise the evaluator's reason is surfaced and fed into a fresh turn. A `◎ goal` indicator shows on the status bar while a goal is active. Listed in `/help` and the command picker.
+
+### Changed
+
+- **Bumped vstorm-co packages** ([#145](https://github.com/vstorm-co/pydantic-deepagents/pull/145), Renovate) (`pyproject.toml`). `pydantic-ai-todo` to `>=0.2.5` — adds the `update_todo_statuses` batch tool and defaults `TodoItem.status` to `"pending"` (one fewer validation round-trip on plan creation). `pydantic-ai-backend` to `>=0.2.12` (`console` + `docker` extras).
+
 ## [0.3.28] - 2026-06-07
 
 ### Changed
