@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.32] - 2026-06-25
+## [0.3.32] - 2026-06-26
+
+### Changed
+
+- **Migrated to pydantic-ai 2.0.** pydantic-ai 2.0 removed the deprecated `Agent(history_processors=...)` parameter and the `pydantic_ai.usage.Usage` class. User-supplied `history_processors` are now wrapped in `ProcessHistory` capabilities and registered via the capabilities API (`pydantic_deep/agent.py`); the `history_processors=` argument to `create_deep_agent()` is unchanged. The CLI headless runner now uses `RunUsage` instead of `Usage` (`apps/cli/run.py`); its JSON output keys (`request_tokens` / `response_tokens`) are unchanged, sourced from `RunUsage.input_tokens` / `output_tokens`.
+- **`WebSearch` / `WebFetch` keep their local fallback under pydantic-ai 2.0** (`pydantic_deep/agent.py`). 2.0 changed the capability default to `local=None` (native-only), so a model whose provider lacks a native `WebFetchTool` now errored (`Native tool(s) ['WebFetchTool'] not supported by this model`) instead of falling back. We now pass `WebSearch(local="duckduckgo")` and `WebFetch(local=True)` to restore the pre-2.0 behaviour: the native tool is used when the provider supports it, and the local fallback kicks in otherwise.
 
 ### Fixed
 
@@ -15,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
+- **Bumped `pydantic-ai-slim` to `>=2.0.0`** (`pyproject.toml`). pydantic-deep now targets the pydantic-ai 2.0 line (see *Changed* above). Consumers still pinned to pydantic-ai 1.x must stay on pydantic-deep 0.3.31.
 - **Bumped `summarization-pydantic-ai` to `>=0.1.10`** (`pyproject.toml`). Picks up two history-rewriting fixes of the same trailing-`ModelRequest` class: `LimitWarnerProcessor` no longer drops the already-empty trailing `ModelRequest` that pydantic-ai appends when resuming without a prompt, and `SlidingWindowProcessor` no longer trims history down to empty on a zero `keep`.
 
 ## [0.3.31] - 2026-06-22
