@@ -989,7 +989,7 @@ def create_deep_agent(  # noqa: C901
             skills=skills,
             directories=directories,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
         )
-        all_toolsets.append(skills_toolset)  # type: ignore[arg-type]
+        all_toolsets.append(skills_toolset)
 
     # Context toolset
     context_toolset = None
@@ -1219,9 +1219,6 @@ def create_deep_agent(  # noqa: C901
                 on_cost_update=on_cost_update,
             )
 
-    if all_processors:
-        agent_create_kwargs["history_processors"] = all_processors
-
     # Anthropic-specific keys are silently ignored by non-Anthropic models,
     # so we set them unconditionally - no provider detection needed.
     effective_model_settings: dict[str, Any] = {
@@ -1333,21 +1330,35 @@ def create_deep_agent(  # noqa: C901
     if cost_cap is not None:
         all_capabilities.append(cost_cap)
 
+    # `local=` provides a fallback for models whose provider has no native web
+    # tool. pydantic-ai 2.0 changed the default to `local=None` (no fallback),
+    # so a model that lacks native `WebFetchTool` now errors instead of falling
+    # back. We opt back into the local fallback to preserve pre-2.0 behaviour.
     if web_search:  # pragma: no cover
         from pydantic_ai.capabilities import WebSearch
 
-        all_capabilities.append(WebSearch())
+        all_capabilities.append(WebSearch(local="duckduckgo"))
 
     if web_fetch:  # pragma: no cover
         from pydantic_ai.capabilities import WebFetch
 
-        all_capabilities.append(WebFetch())
+        all_capabilities.append(WebFetch(local=True))
 
     if thinking is not False:  # pragma: no cover
         from pydantic_ai.capabilities import Thinking
 
         effort: Any = thinking if isinstance(thinking, str) else True
         all_capabilities.append(Thinking(effort=effort))
+
+    # User-provided history processors are wrapped as ProcessHistory
+    # capabilities — pydantic-ai 2.0 removed the `Agent(history_processors=...)`
+    # parameter in favour of the capabilities API. They run after the built-in
+    # history-affecting capabilities (context manager, eviction) so they operate
+    # on the already-managed history.
+    if all_processors:
+        from pydantic_ai.capabilities import ProcessHistory
+
+        all_capabilities.extend(ProcessHistory(processor) for processor in all_processors)
 
     # Add user-provided capabilities
     if capabilities:
