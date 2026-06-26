@@ -1,7 +1,9 @@
 """Type definitions for the improve module.
 
-Dataclasses representing insights extracted from sessions, proposed changes
-to context files, and full improvement reports.
+The per-session insight models and `ProposedChange` are pydantic `BaseModel`s so
+they can be used directly as agent `output_type`s. `ImprovementReport` is a plain
+dataclass: it is assembled in code (not produced by an LLM) and holds `Exception`
+diagnostics that don't belong in a validated model.
 """
 
 from __future__ import annotations
@@ -9,141 +11,95 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from pydantic import BaseModel, Field
+
 ChangeType = Literal["append", "update", "create"]
 """Valid change types for a :class:`ProposedChange`."""
 
 
-@dataclass
-class FailureInsight:
+class FailureInsight(BaseModel):
     """A failure observed during a session."""
 
     description: str
-    """What went wrong."""
     root_cause: str
-    """Why it happened (if identifiable)."""
     resolution: str
-    """How it was resolved (empty if unresolved)."""
-    tool_calls: list[str] = field(default_factory=list)
-    """Tool calls involved in the failure."""
+    tool_calls: list[str] = Field(default_factory=list)
 
 
-@dataclass
-class PatternInsight:
+class PatternInsight(BaseModel):
     """A recurring pattern observed across tool usage."""
 
     pattern: str
-    """Description of the pattern (e.g., 'read → edit → test → commit')."""
     frequency: int
-    """How many times the pattern appeared."""
     context: str
-    """When/where this pattern is typically used."""
 
 
-@dataclass
-class PreferenceInsight:
+class PreferenceInsight(BaseModel):
     """A user preference inferred from corrections or explicit requests."""
 
     preference: str
-    """What the user prefers."""
     evidence: str
-    """Evidence from the session (e.g., user correction, explicit request)."""
 
 
-@dataclass
-class ContextInsight:
+class ContextInsight(BaseModel):
     """A project fact discovered from session interactions."""
 
     fact: str
-    """The discovered fact about the project."""
     confidence: float
-    """Confidence level from 0.0 to 1.0."""
 
 
-@dataclass
-class DecisionInsight:
+class DecisionInsight(BaseModel):
     """An important decision made during a session."""
 
     decision: str
-    """What was decided."""
     reasoning: str
-    """Why this decision was made."""
     confirmed: bool
-    """Whether the user explicitly confirmed/approved."""
 
 
-@dataclass
-class UserFactInsight:
+class UserFactInsight(BaseModel):
     """A personal fact about the user discovered in conversation."""
 
     fact: str
-    """The fact (e.g., 'User's name is Kacper', 'User speaks Polish')."""
     category: str
-    """Category: 'identity', 'role', 'language', 'expertise', 'preference', 'other'."""
     confidence: float
-    """Confidence level from 0.0 to 1.0."""
 
 
-@dataclass
-class AgentLearningInsight:
+class AgentLearningInsight(BaseModel):
     """Something the agent learned from its own behavior during a session."""
 
     learning: str
-    """What was learned (e.g., 'tests are in tests/ dir', 'uv run pytest works')."""
     category: str
-    """Category: 'tool_chain', 'file_location', 'build_command',
-    'environment', 'workaround', 'other'."""
     evidence: str
-    """Tool calls or actions that demonstrated this."""
     confidence: float
-    """Confidence level from 0.0 to 1.0."""
 
 
-@dataclass
-class SessionInsights:
+class SessionInsights(BaseModel):
     """Extracted insights from a single session."""
 
     session_id: str
-    """Unique identifier for the session."""
     timestamp: str
-    """ISO timestamp of the session."""
     message_count: int
-    """Total number of messages in the session."""
     tool_calls_count: int
-    """Total number of tool calls in the session."""
-    failures: list[FailureInsight] = field(default_factory=list)
-    """Failures observed during the session."""
-    patterns: list[PatternInsight] = field(default_factory=list)
-    """Recurring patterns observed."""
-    preferences: list[PreferenceInsight] = field(default_factory=list)
-    """User preferences inferred."""
-    project_context: list[ContextInsight] = field(default_factory=list)
-    """Project facts discovered."""
-    decisions: list[DecisionInsight] = field(default_factory=list)
-    """Important decisions made."""
-    user_facts: list[UserFactInsight] = field(default_factory=list)
-    """Personal facts about the user."""
-    agent_learnings: list[AgentLearningInsight] = field(default_factory=list)
-    """Behavioral learnings from agent's own actions."""
+    failures: list[FailureInsight] = Field(default_factory=list)
+    patterns: list[PatternInsight] = Field(default_factory=list)
+    preferences: list[PreferenceInsight] = Field(default_factory=list)
+    project_context: list[ContextInsight] = Field(default_factory=list)
+    decisions: list[DecisionInsight] = Field(default_factory=list)
+    user_facts: list[UserFactInsight] = Field(default_factory=list)
+    agent_learnings: list[AgentLearningInsight] = Field(default_factory=list)
 
 
-@dataclass
-class ProposedChange:
+class ProposedChange(BaseModel):
     """A proposed change to a context file."""
 
     target_file: str
     """Target file: 'SOUL.md', 'AGENTS.md', 'MEMORY.md', or 'skills/...'."""
     change_type: ChangeType
-    """Type of change: 'append', 'update', or 'create'."""
-    section: str | None
-    """Section in the file (for 'update' changes), or None."""
+    section: str | None = None
     content: str
-    """New or modified content."""
     reason: str
-    """Why this change is proposed."""
-    confidence: float
-    """Confidence level from 0.0 to 1.0."""
-    source_sessions: list[str] = field(default_factory=list)
-    """Session IDs that support this change."""
+    confidence: float = Field(ge=0.0, le=1.0)
+    source_sessions: list[str] = Field(default_factory=list)
 
 
 @dataclass

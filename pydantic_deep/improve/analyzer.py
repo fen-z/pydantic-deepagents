@@ -313,7 +313,7 @@ class ImprovementAnalyzer:
                 )
                 modified.append(target)
 
-            elif change.change_type == "update":
+            else:  # "update"
                 if not filepath.is_file():
                     # Cannot update a file that doesn't exist, fall back to create
                     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -363,15 +363,6 @@ class ImprovementAnalyzer:
                         encoding="utf-8",
                     )
                 modified.append(target)
-
-            else:
-                # Guard against unknown change types. Without this, an
-                # unrecognized value would be silently dropped, leaving the
-                # caller to believe the change was handled.
-                raise ValueError(
-                    f"Unknown change_type {change.change_type!r} for target "
-                    f"{target!r}; expected 'append', 'update', or 'create'."
-                )
 
         return modified
 

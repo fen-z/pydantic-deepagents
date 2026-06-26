@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from pydantic_deep.improve.analyzer import DEFAULT_CONTEXT_FILES, ImprovementAnalyzer
 from pydantic_deep.improve.extractor import (
     SessionExtractor,
@@ -1071,23 +1069,6 @@ class TestImprovementAnalyzer:
         ]
         await a.apply_changes(changes)
         assert (tmp_path / "SOUL.md").read_text() == "created"
-
-    async def test_apply_changes_unknown_type(self, tmp_path: Path) -> None:
-        a = ImprovementAnalyzer(model="test", working_dir=tmp_path)
-        changes = [
-            ProposedChange(
-                target_file="SOUL.md",
-                change_type="unknown",
-                section=None,
-                content="test",
-                reason="test",
-                confidence=0.9,
-            )
-        ]
-        with pytest.raises(ValueError, match="Unknown change_type 'unknown'"):
-            await a.apply_changes(changes)
-        # The unrecognized change must not be silently written.
-        assert not (tmp_path / "SOUL.md").exists()
 
     def test_get_last_improve_time_no_file(self, tmp_path: Path) -> None:
         a = ImprovementAnalyzer(model="test", working_dir=tmp_path)

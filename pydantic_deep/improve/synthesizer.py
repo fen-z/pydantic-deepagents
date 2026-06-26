@@ -7,32 +7,19 @@ and current context files into minimal, high-confidence proposed changes.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from pydantic_deep.improve.prompts import SYNTHESIS_PROMPT
-from pydantic_deep.improve.types import ChangeType, ProposedChange, SessionInsights
-
-
-class _ProposedChangeModel(BaseModel):
-    """Pydantic model for a single proposed change (used for structured output)."""
-
-    target_file: str
-    change_type: ChangeType
-    section: str | None = None
-    content: str
-    reason: str
-    confidence: float = Field(ge=0.0, le=1.0)
-    source_sessions: list[str] = Field(default_factory=list)
+from pydantic_deep.improve.types import ProposedChange, SessionInsights
 
 
 class _SynthesisOutput(BaseModel):
     """Structured output for the synthesis agent."""
 
-    proposed_changes: list[_ProposedChangeModel] = Field(default_factory=list)
+    proposed_changes: list[ProposedChange] = Field(default_factory=list)
 
 
 class InsightSynthesizer:
@@ -98,19 +85,7 @@ class InsightSynthesizer:
         )
 
         result = await agent.run(user_prompt)
-
-        return [
-            ProposedChange(
-                target_file=change.target_file,
-                change_type=change.change_type,
-                section=change.section,
-                content=change.content,
-                reason=change.reason,
-                confidence=change.confidence,
-                source_sessions=list(change.source_sessions),
-            )
-            for change in result.output.proposed_changes
-        ]
+        return result.output.proposed_changes
 
     @staticmethod
     def _format_tool_sequences(sequences: dict[str, str]) -> str:
@@ -142,7 +117,7 @@ class InsightSynthesizer:
         Returns:
             JSON string representation of all insights.
         """
-        data: list[dict[str, Any]] = [asdict(i) for i in insights]
+        data: list[dict[str, Any]] = [i.model_dump() for i in insights]
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     @staticmethod
