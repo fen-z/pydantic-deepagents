@@ -12,7 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 from pydantic_ai_backends import BackendProtocol, StateBackend
 
-DEFAULT_TEAM_MEMBER_MODEL = "anthropic:claude-sonnet-4-6"
+from pydantic_deep.models import DEFAULT_TEAM_MEMBER_MODEL
 
 
 class TeamMemberSpec(BaseModel):

@@ -34,6 +34,11 @@ from subagents_pydantic_ai import (
 
 from pydantic_deep.capabilities.hooks import HookEvent
 from pydantic_deep.deps import DeepAgentDeps
+from pydantic_deep.models import (
+    DEFAULT_IMPROVE_MODEL,
+    DEFAULT_MODEL,
+    DEFAULT_SUMMARIZATION_MODEL,
+)
 from pydantic_deep.prompts import BASE_PROMPT
 from pydantic_deep.toolsets.skills import Skill, SkillsToolset
 from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
@@ -53,10 +58,6 @@ if TYPE_CHECKING:
 
 OutputDataT = TypeVar("OutputDataT")
 
-
-DEFAULT_MODEL = "anthropic:claude-opus-4-6"
-DEFAULT_SUBAGENT_MODEL = "anthropic:claude-sonnet-4-6"
-DEFAULT_SUMMARIZATION_MODEL = "anthropic:claude-haiku-4-5-20251001"
 
 DEFAULT_INSTRUCTIONS = BASE_PROMPT
 
@@ -1103,7 +1104,7 @@ def create_deep_agent(  # noqa: C901
         improve_toolset = ImproveToolset(
             sessions_dir=_improve_sessions,
             working_dir=_Path("."),
-            model=model if isinstance(model, str) else "openrouter:anthropic/claude-sonnet-4",
+            model=model if isinstance(model, str) else DEFAULT_IMPROVE_MODEL,
         )
         all_toolsets.append(improve_toolset)
 

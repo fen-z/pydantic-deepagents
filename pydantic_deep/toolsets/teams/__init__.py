@@ -5,8 +5,8 @@ engine. When a `registry` is provided, team members are registered as subagents
 and `assign_task` delegates to the subagent `task()` tool for actual execution.
 """
 
+from pydantic_deep.models import DEFAULT_TEAM_MEMBER_MODEL
 from pydantic_deep.toolsets.teams.primitives import (
-    DEFAULT_TEAM_MEMBER_MODEL,
     AgentTeam,
     SharedTodoItem,
     SharedTodoList,

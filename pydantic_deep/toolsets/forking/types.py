@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from pydantic_deep.models import DEFAULT_JUDGE_MODEL
+
 
 @_dataclass(frozen=True)
 class BranchSpec:
@@ -140,7 +142,7 @@ class MergeStrategy:
     """
 
     kind: Literal["manual", "auto", "auto_with_fallback", "vote"] = "auto_with_fallback"
-    judge_model: str = "anthropic:claude-haiku-4-5-20251001"
+    judge_model: str = DEFAULT_JUDGE_MODEL
     judge_models: list[str] | None = None
     confidence_threshold: float = 0.80
     show_reasoning: bool = True

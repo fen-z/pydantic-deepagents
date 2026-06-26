@@ -17,6 +17,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from pydantic_deep.improve.analyzer import ImprovementAnalyzer
 from pydantic_deep.improve.types import ImprovementReport
+from pydantic_deep.models import DEFAULT_IMPROVE_MODEL
 
 # Tool description constants
 
@@ -146,7 +147,7 @@ class ImproveToolset(FunctionToolset[Any]):
         self,
         sessions_dir: Path | None = None,
         working_dir: Path | None = None,
-        model: str = "openrouter:anthropic/claude-sonnet-4",
+        model: str = DEFAULT_IMPROVE_MODEL,
         context_files: dict[str, str] | None = None,
     ) -> None:
         """Initialize the improve toolset.

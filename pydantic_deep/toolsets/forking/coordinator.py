@@ -31,6 +31,12 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai_shields import CostInfo, CostTracking
 
 from pydantic_deep.deps import DeepAgentDeps, unwrap_backend
+from pydantic_deep.models import (
+    GOOGLE_CHEAP_MODEL,
+    GOOGLE_ENV_VARS,
+    NATIVE_CHEAP_MODELS,
+    OPENROUTER_CHEAP_MODELS,
+)
 from pydantic_deep.toolsets.checkpointing import Checkpoint, CheckpointStore
 from pydantic_deep.toolsets.forking.budget import AggregateBudgetWatcher, BudgetWatcher
 from pydantic_deep.toolsets.forking.diff import build_diff_report
@@ -91,31 +97,6 @@ async def _reap_process(proc: asyncio.subprocess.Process) -> None:
             await asyncio.shield(asyncio.wait_for(proc.wait(), timeout=_CANCEL_CLEANUP_TIMEOUT_S))
 
 
-#: Checked in order; first available env var wins the slot in the vote panel.
-_NATIVE_CHEAP_MODELS: tuple[tuple[str, str], ...] = (
-    ("ANTHROPIC_API_KEY", "anthropic:claude-haiku-4-5"),
-    ("OPENAI_API_KEY", "openai:gpt-4o-mini"),
-    ("MISTRAL_API_KEY", "mistral:mistral-small-latest"),
-    ("GROQ_API_KEY", "groq:llama-3.1-8b-instant"),
-    ("COHERE_API_KEY", "cohere:command-r"),
-)
-
-#: Google uses several different env var names depending on the SDK version.
-_GOOGLE_ENV_VARS: tuple[str, ...] = (
-    "GOOGLE_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_GENERATIVE_AI_API_KEY",
-)
-_GOOGLE_CHEAP_MODEL = "google-gla:gemini-3.1-flash-lite-preview"
-
-#: OpenRouter: one API key, three cheap model-family representatives.
-_OPENROUTER_CHEAP_MODELS: tuple[str, ...] = (
-    "openrouter:anthropic/claude-haiku-4-5",
-    "openrouter:openai/gpt-5.4",
-    "openrouter:google/gemini-3.1-flash-lite-preview",
-)
-
-
 def _detect_vote_models(fallback: str) -> list[str]:
     """Build a diverse 3-judge panel from whichever API keys are present.
 
@@ -136,15 +117,15 @@ def _detect_vote_models(fallback: str) -> list[str]:
     """
     pool: list[str] = []
 
-    for env_var, model in _NATIVE_CHEAP_MODELS:
+    for env_var, model in NATIVE_CHEAP_MODELS:
         if os.environ.get(env_var):
             pool.append(model)
 
-    if any(os.environ.get(v) for v in _GOOGLE_ENV_VARS):
-        pool.append(_GOOGLE_CHEAP_MODEL)
+    if any(os.environ.get(v) for v in GOOGLE_ENV_VARS):
+        pool.append(GOOGLE_CHEAP_MODEL)
 
     if os.environ.get("OPENROUTER_API_KEY"):
-        pool.extend(_OPENROUTER_CHEAP_MODELS)
+        pool.extend(OPENROUTER_CHEAP_MODELS)
 
     seen: set[str] = set()
     unique: list[str] = []

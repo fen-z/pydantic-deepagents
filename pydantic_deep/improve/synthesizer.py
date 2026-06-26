@@ -14,6 +14,7 @@ from pydantic_ai import Agent
 
 from pydantic_deep.improve.prompts import SYNTHESIS_PROMPT
 from pydantic_deep.improve.types import ProposedChange, SessionInsights
+from pydantic_deep.models import DEFAULT_IMPROVE_MODEL
 
 MAX_TOOL_SEQUENCE_CHARS = 8000
 """Per-session cap on raw tool-sequence text in the synthesis prompt."""
@@ -32,7 +33,7 @@ class InsightSynthesizer:
     files and produces a list of proposed changes to context files.
     """
 
-    def __init__(self, model: str = "openrouter:anthropic/claude-sonnet-4") -> None:
+    def __init__(self, model: str = DEFAULT_IMPROVE_MODEL) -> None:
         """Initialize the synthesizer.
 
         Args:

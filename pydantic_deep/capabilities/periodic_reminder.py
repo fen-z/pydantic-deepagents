@@ -33,6 +33,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from pydantic_deep.deps import DeepAgentDeps
+from pydantic_deep.models import DEFAULT_REMINDER_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class LLMReminderGenerator:
             compact transcript to save tokens.
     """
 
-    model: str = "anthropic:claude-haiku-4-5-20251001"
+    model: str = DEFAULT_REMINDER_MODEL
     max_context_messages: int = 10
 
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False)

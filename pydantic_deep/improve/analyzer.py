@@ -17,6 +17,7 @@ from typing import Any
 from pydantic_deep.improve.extractor import SessionExtractor
 from pydantic_deep.improve.synthesizer import InsightSynthesizer
 from pydantic_deep.improve.types import ImprovementReport, ProposedChange, SessionInsights
+from pydantic_deep.models import DEFAULT_IMPROVE_MODEL
 from pydantic_deep.toolsets.memory import DEFAULT_MEMORY_DIR, get_memory_path
 
 # Default MEMORY.md path, aligned with the memory toolset's default location
@@ -84,7 +85,7 @@ class ImprovementAnalyzer:
 
     def __init__(
         self,
-        model: str = "openrouter:anthropic/claude-sonnet-4",
+        model: str = DEFAULT_IMPROVE_MODEL,
         sessions_dir: Path | None = None,
         working_dir: Path | None = None,
         on_progress: ProgressCallback | None = None,
