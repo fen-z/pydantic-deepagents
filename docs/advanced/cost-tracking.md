@@ -1,6 +1,13 @@
 # Cost Tracking
 
-pydantic-deep tracks token usage and USD costs automatically using `CostTracking` from [pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields). Cost tracking is **enabled by default** and is implemented as a pydantic-ai capability.
+Autonomous agents can make a *lot* of model calls — and each one costs money. So
+pydantic-deep keeps a running tally for you: every run's token usage and USD cost,
+tracked automatically and available after the fact (or capped with a budget
+before a runaway loop empties your account).
+
+It's **on by default**, powered by `CostTracking` from
+[pydantic-ai-shields](https://github.com/vstorm-co/pydantic-ai-shields) as a
+pydantic-ai capability — nothing to wire up.
 
 ## Quick Start
 

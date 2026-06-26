@@ -1,6 +1,10 @@
 # Agent Teams
 
-Agent teams enable multi-agent collaboration with **shared TODO lists**, **peer-to-peer messaging**, and **real agent execution** via the subagent engine. Unlike plain subagents (parent-child delegation), teams are flat groups of agents that coordinate through shared state.
+[Sub-agents](subagents.md) are a hierarchy: a parent delegates down to a child.
+**Teams** are the opposite shape — a *flat* group of peers that work the same
+problem together, coordinating through **shared TODO lists**, **peer-to-peer
+messaging**, and real execution via the sub-agent engine. Reach for a team when
+the work isn't "do this subtask for me" but "let's tackle this together."
 
 ## Quick Start
 

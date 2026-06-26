@@ -1,6 +1,9 @@
 # Streaming
 
-pydantic-deep supports streaming execution for real-time progress monitoring.
+A long agent run can take a while — and a frozen screen makes it feel broken.
+Streaming lets you watch the work happen: tokens as they're generated, tool
+calls as they fire, todos as they tick over. Instead of awaiting one final
+result, you iterate over events as the run unfolds.
 
 ## Basic Streaming
 

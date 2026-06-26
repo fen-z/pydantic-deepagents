@@ -1,6 +1,9 @@
 # Checkpointing
 
-pydantic-deep supports conversation checkpointing — saving snapshots of conversation state at key points so the agent (or user) can **rewind** to any checkpoint or **fork** from a checkpoint into a new session.
+Agents go down wrong paths. Checkpointing gives you an undo button: snapshots of
+the conversation at key points, so the agent (or you) can **rewind** to a known-
+good state and try again — or **fork** from a checkpoint into a brand-new session.
+It's save-states for a conversation.
 
 ## Quick Start
 
