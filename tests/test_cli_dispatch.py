@@ -104,3 +104,68 @@ class TestAliases:
             app.exit = MagicMock()
             await dispatch_command(app, command)
             app.exit.assert_called_once()
+
+
+class TestRetry:
+    async def test_no_prompt_warns(self, app):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.last_user_prompt = ""
+            app.notify = MagicMock()
+            await dispatch_command(app, "/retry")
+            assert any("nothing to retry" in t.lower() for t in _notify_texts(app))
+
+    async def test_reruns_last_prompt_and_drops_turn(self, app):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.last_user_prompt = "do the thing"
+            app.message_history = ["a", "b", "c", "d"]
+            app.agent_task = None
+            app.screen._run_agent = MagicMock()  # type: ignore[attr-defined]
+            app.notify = MagicMock()
+            await dispatch_command(app, "/retry")
+            # Previous turn dropped, last prompt re-dispatched.
+            assert app.message_history == ["a", "b"]
+            app.screen._run_agent.assert_called_once_with("do the thing")  # type: ignore[attr-defined]
+
+    async def test_blocked_while_running(self, app):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.last_user_prompt = "x"
+            running = MagicMock()
+            running.done.return_value = False
+            app.agent_task = running
+            app.screen._run_agent = MagicMock()  # type: ignore[attr-defined]
+            app.notify = MagicMock()
+            await dispatch_command(app, "/retry")
+            assert any("still running" in t.lower() for t in _notify_texts(app))
+            app.screen._run_agent.assert_not_called()  # type: ignore[attr-defined]
+
+
+class TestExport:
+    async def test_nothing_to_export_warns(self, app):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.notify = MagicMock()
+            await dispatch_command(app, "/export")
+            assert any("nothing to export" in t.lower() for t in _notify_texts(app))
+
+    async def test_writes_markdown(self, app, tmp_path):
+        from apps.cli.widgets.message_list import MessageList
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            msg_list = app.screen.query_one(MessageList)
+            msg_list.append_user_message("hello there")
+            assistant = msg_list.begin_assistant_message()
+            assistant.append_text("general kenobi")
+            await pilot.pause()
+            target = tmp_path / "out" / "convo.md"
+            app.notify = MagicMock()
+            await dispatch_command(app, f"/export {target}")
+            assert target.exists()
+            content = target.read_text(encoding="utf-8")
+            assert "hello there" in content
+            assert "general kenobi" in content
+            assert "## You" in content and "## Assistant" in content
+            assert any("Exported" in t for t in _notify_texts(app))

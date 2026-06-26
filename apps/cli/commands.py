@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import shutil
 import subprocess
 import sys
@@ -107,6 +108,34 @@ async def _cmd_undo(app: DeepApp, arg: str) -> None:
         app.notify("Removed last message")
     else:
         app.notify("No messages to undo", severity="warning")
+
+
+async def _cmd_retry(app: DeepApp, arg: str) -> None:
+    """Re-run the last user prompt, dropping the previous (bad/aborted) turn."""
+    from apps.cli.widgets.message_list import MessageList
+
+    prompt = getattr(app, "last_user_prompt", "")
+    if not prompt:
+        app.notify("Nothing to retry yet", severity="warning")
+        return
+    task = app.agent_task
+    if task is not None and not task.done():
+        app.notify("Agent is still running — wait for it to finish", severity="warning")
+        return
+    if getattr(app, "active_fork", None) is not None:
+        app.notify("Can't retry while a fork is active — use /merge first", severity="warning")
+        return
+
+    chat = app.screen
+    if not hasattr(chat, "_run_agent"):
+        app.notify("Retry is unavailable here", severity="error")
+        return
+    # Drop the previous turn (request + response) so the model re-runs fresh.
+    if len(app.message_history) >= 2:
+        app.message_history = app.message_history[:-2]
+    with contextlib.suppress(Exception):
+        chat.query_one(MessageList).append_user_message(prompt)
+    chat._run_agent(prompt)  # type: ignore[attr-defined]
 
 
 async def _cmd_copy(app: DeepApp, arg: str) -> None:
@@ -268,6 +297,48 @@ async def _cmd_copy_all(app: DeepApp, arg: str) -> None:
         app.notify(f"Copied {len(lines)} lines to clipboard")
     except Exception as e:
         app.notify(f"Failed to copy: {e}", severity="error")
+
+
+async def _cmd_export(app: DeepApp, arg: str) -> None:
+    """Write the conversation to a Markdown file (`/export [path]`)."""
+    from datetime import datetime
+
+    from apps.cli.widgets.assistant_message import AssistantMessage
+    from apps.cli.widgets.message_list import MessageList
+    from apps.cli.widgets.user_message import UserMessage
+
+    try:
+        msg_list = app.screen.query_one(MessageList)
+    except Exception:
+        app.notify("Nothing to export", severity="warning")
+        return
+
+    lines: list[str] = ["# Conversation", ""]
+    count = 0
+    for child in msg_list.children:
+        if isinstance(child, UserMessage):
+            lines += ["## You", "", child.text, ""]
+            count += 1
+        elif isinstance(child, AssistantMessage):
+            lines += ["## Assistant", "", child.text, ""]
+            count += 1
+
+    if count == 0:
+        app.notify("Nothing to export", severity="warning")
+        return
+
+    if arg.strip():
+        path = Path(arg.strip()).expanduser()
+    else:
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = Path.cwd() / f"conversation-{ts}.md"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines), encoding="utf-8")
+    except OSError as e:
+        app.notify(f"Export failed: {e}", severity="error")
+        return
+    app.notify(f"Exported {count} messages → {path}")
 
 
 async def _cmd_cost(app: DeepApp, arg: str) -> None:
@@ -635,7 +706,9 @@ _COMMANDS: dict[str, CommandHandler] = {
     "/q": _cmd_quit,
     "/clear": _cmd_clear,
     "/undo": _cmd_undo,
+    "/retry": _cmd_retry,
     "/copy": _cmd_copy,
+    "/export": _cmd_export,
     "/model": _cmd_model,
     "/context": _cmd_context,
     "/compact": _cmd_compact,

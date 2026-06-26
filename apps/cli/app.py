@@ -109,6 +109,8 @@ class DeepApp(App):
         self._branch = _detect_git_branch(str(working_dir))
         self.message_history: list[ModelMessage] = message_history or []
         self.last_response: str = ""
+        #: Text of the most recent user prompt — powers `/retry`.
+        self.last_user_prompt: str = ""
         self._startup_error = startup_error
         self.queue = getattr(deps, "message_queue", None)
         # Active goaql-completion loop (set via /goal). The evaluator is created

@@ -17,6 +17,7 @@ _HELP_TEXT = """\
   [bold cyan]/copy[/bold cyan]        Copy last response to clipboard
   [bold cyan]/cost[/bold cyan]        Show accumulated cost
   [bold cyan]/diff[/bold cyan]        Show git diff
+  [bold cyan]/export[/bold cyan]      Export the conversation to a Markdown file
   [bold cyan]/fork[/bold cyan]        Spawn N parallel branches (Live Run Forking)
   [bold cyan]/fork-config[/bold cyan]  Configure /fork branches, models, and budgets (persisted)
   [bold cyan]/goal[/bold cyan]        Keep working toward a condition (/goal clear to stop)
@@ -29,6 +30,7 @@ _HELP_TEXT = """\
   [bold cyan]/provider[/bold cyan]    Configure AI provider
   [bold cyan]/remember[/bold cyan]    Add note to persistent memory
   [bold cyan]/remind[/bold cyan]      Switch periodic reminder mode (off / first / context / llm)
+  [bold cyan]/retry[/bold cyan]       Re-run the last prompt (drops the previous turn)
   [bold cyan]/save[/bold cyan]        Show save status
   [bold cyan]/settings[/bold cyan]    Open settings (edit config.toml)
   [bold cyan]/skills[/bold cyan]      List available skills

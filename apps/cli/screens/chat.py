@@ -741,6 +741,10 @@ class ChatScreen(Screen):
 
         text = self._expand_file_refs(text)
 
+        # Remember the prompt so `/retry` can re-run it after a bad/aborted turn.
+        if text:
+            app.last_user_prompt = text  # type: ignore[attr-defined]
+
         msg_list = self.query_one(MessageList)
 
         # Attach any clipboard images grabbed via Ctrl+V / `/paste`, building a
