@@ -50,6 +50,12 @@ from pydantic_deep.capabilities.periodic_reminder import (
 )
 from pydantic_deep.capabilities.stuck_loop import StuckLoopDetection
 from pydantic_deep.deps import DeepAgentDeps
+from pydantic_deep.features.memory import (
+    DEFAULT_MAX_MEMORY_LINES,
+    DEFAULT_MEMORY_DIR,
+    DEFAULT_PIN_END_MARKER,
+    AgentMemoryToolset,
+)
 from pydantic_deep.instructions import build_instruction_providers, render_instructions
 from pydantic_deep.models import (
     DEFAULT_IMPROVE_MODEL,
@@ -73,12 +79,6 @@ from pydantic_deep.toolsets.forking import create_fork_toolset
 from pydantic_deep.toolsets.forking.coordinator import _PerBranchCostTracking
 from pydantic_deep.toolsets.improve import ImproveToolset
 from pydantic_deep.toolsets.liteparse import LiteparseToolset
-from pydantic_deep.toolsets.memory import (
-    DEFAULT_MAX_MEMORY_LINES,
-    DEFAULT_MEMORY_DIR,
-    DEFAULT_PIN_END_MARKER,
-    AgentMemoryToolset,
-)
 from pydantic_deep.toolsets.plan import (
     PLANNER_DESCRIPTION,
     PLANNER_INSTRUCTIONS,

@@ -1,21 +1,16 @@
-"""Deprecated import location for the memory feature.
+"""Memory feature — persistent per-agent MEMORY.md.
 
-The implementation moved to :mod:`pydantic_deep.features.memory` (see the
-CHANGELOG). This module re-exports the public names for backward compatibility
-and will be removed in the next minor release. Import from
-``pydantic_deep.features.memory`` or the top-level ``pydantic_deep`` instead.
+A vertical slice: `capability.py` (MemoryCapability), `toolset.py`
+(AgentMemoryToolset + tool descriptions), `service.py` (pure load/format/path
+logic + defaults), `types.py` (MemoryFile, MemoryAccessError).
 """
 
-from __future__ import annotations
-
-import warnings
-
+from pydantic_deep.features.memory.capability import MemoryCapability
 from pydantic_deep.features.memory.service import (
     DEFAULT_MAX_MEMORY_LINES,
     DEFAULT_MEMORY_DIR,
     DEFAULT_MEMORY_FILENAME,
     DEFAULT_PIN_END_MARKER,
-    _select_recent_lines,
     format_memory_prompt,
     get_memory_path,
     load_memory,
@@ -38,16 +33,9 @@ __all__ = [
     "WRITE_MEMORY_DESCRIPTION",
     "AgentMemoryToolset",
     "MemoryAccessError",
+    "MemoryCapability",
     "MemoryFile",
-    "_select_recent_lines",
     "format_memory_prompt",
     "get_memory_path",
     "load_memory",
 ]
-
-warnings.warn(
-    "pydantic_deep.toolsets.memory has moved to pydantic_deep.features.memory; "
-    "update your imports (this shim will be removed in the next minor release).",
-    DeprecationWarning,
-    stacklevel=2,
-)

@@ -461,7 +461,7 @@ Persistent agent memory. See [Memory](../advanced/memory.md).
 ### Constructor
 
 ```python
-from pydantic_deep.toolsets.memory import AgentMemoryToolset
+from pydantic_deep.features.memory import AgentMemoryToolset
 
 toolset = AgentMemoryToolset(
     agent_name="main",

@@ -290,7 +290,7 @@ class ContextToolset(FunctionToolset[Any]):
 
 ### 8. MemoryToolset
 
-**Source:** `pydantic_deep/toolsets/memory.py`
+**Source:** `pydantic_deep/features/memory/`
 
 **Tools:**
 - `read_memory` — Read full MEMORY.md content
@@ -467,7 +467,7 @@ class HookResult:
 
 ### 3. MemoryCapability
 
-**Source:** `pydantic_deep/capabilities/memory.py`
+**Source:** `pydantic_deep/features/memory/capability.py`
 
 Wraps `AgentMemoryToolset` with both tools and instruction injection.
 

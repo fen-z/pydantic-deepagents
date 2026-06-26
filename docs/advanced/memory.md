@@ -48,7 +48,7 @@ Each agent gets its own memory file:
 
 ### System Prompt Injection
 
-When memory exists, the [`AgentMemoryToolset`][pydantic_deep.toolsets.memory.AgentMemoryToolset] injects it into the system prompt via `get_instructions()`:
+When memory exists, the [`AgentMemoryToolset`][pydantic_deep.features.memory.AgentMemoryToolset] injects it into the system prompt via `get_instructions()`:
 
 ```
 ## Agent Memory (main)
@@ -136,7 +136,7 @@ SubAgentConfig(
 You can override the default tool descriptions with the `descriptions` parameter. This is useful when you want the LLM to interpret a tool differently or when integrating with a specific workflow:
 
 ```python
-from pydantic_deep.toolsets.memory import AgentMemoryToolset
+from pydantic_deep.features.memory import AgentMemoryToolset
 
 memory_toolset = AgentMemoryToolset(
     descriptions={
@@ -153,7 +153,7 @@ Only the keys you provide are overridden; any missing keys fall back to the buil
 Use `AgentMemoryToolset` directly for custom setups:
 
 ```python
-from pydantic_deep.toolsets.memory import AgentMemoryToolset
+from pydantic_deep.features.memory import AgentMemoryToolset
 
 memory_toolset = AgentMemoryToolset(
     agent_name="my-agent",
@@ -166,11 +166,11 @@ memory_toolset = AgentMemoryToolset(
 
 | Component | Description |
 |-----------|-------------|
-| [`AgentMemoryToolset`][pydantic_deep.toolsets.memory.AgentMemoryToolset] | Toolset with memory tools and system prompt injection |
-| [`MemoryFile`][pydantic_deep.toolsets.memory.MemoryFile] | Loaded memory file (agent_name, path, content) |
-| [`load_memory`][pydantic_deep.toolsets.memory.load_memory] | Load memory from backend |
-| [`format_memory_prompt`][pydantic_deep.toolsets.memory.format_memory_prompt] | Format memory for system prompt |
-| [`get_memory_path`][pydantic_deep.toolsets.memory.get_memory_path] | Compute memory file path |
+| [`AgentMemoryToolset`][pydantic_deep.features.memory.AgentMemoryToolset] | Toolset with memory tools and system prompt injection |
+| [`MemoryFile`][pydantic_deep.features.memory.MemoryFile] | Loaded memory file (agent_name, path, content) |
+| [`load_memory`][pydantic_deep.features.memory.load_memory] | Load memory from backend |
+| [`format_memory_prompt`][pydantic_deep.features.memory.format_memory_prompt] | Format memory for system prompt |
+| [`get_memory_path`][pydantic_deep.features.memory.get_memory_path] | Compute memory file path |
 
 ## Next Steps
 

@@ -15,11 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic_deep.features.memory import DEFAULT_MEMORY_DIR, get_memory_path
 from pydantic_deep.improve.extractor import SessionExtractor
 from pydantic_deep.improve.synthesizer import InsightSynthesizer
 from pydantic_deep.improve.types import ImprovementReport, ProposedChange, SessionInsights
 from pydantic_deep.models import DEFAULT_IMPROVE_MODEL
-from pydantic_deep.toolsets.memory import DEFAULT_MEMORY_DIR, get_memory_path
 
 # Default MEMORY.md path, aligned with the memory toolset's default location
 # (`get_memory_path(DEFAULT_MEMORY_DIR, "main")`) so that improve writes

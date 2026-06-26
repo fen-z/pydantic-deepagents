@@ -119,6 +119,18 @@ from pydantic_deep.capabilities.hooks import (
 )
 from pydantic_deep.deps import DEFAULT_USAGE_LIMITS as DEFAULT_USAGE_LIMITS
 from pydantic_deep.deps import DeepAgentDeps, unwrap_backend
+from pydantic_deep.features.memory import (
+    DEFAULT_MAX_MEMORY_LINES,
+    DEFAULT_MEMORY_DIR,
+    DEFAULT_MEMORY_FILENAME,
+    DEFAULT_PIN_END_MARKER,
+    AgentMemoryToolset,
+    MemoryAccessError,
+    MemoryFile,
+    format_memory_prompt,
+    get_memory_path,
+    load_memory,
+)
 from pydantic_deep.goal import (
     DEFAULT_GOAL_MODEL,
     GoalEvaluation,
@@ -233,18 +245,6 @@ from pydantic_deep.toolsets.liteparse import (
     PARSE_DOCUMENT_DESCRIPTION,
     SCREENSHOT_DOCUMENT_DESCRIPTION,
     LiteparseToolset,
-)
-from pydantic_deep.toolsets.memory import (
-    DEFAULT_MAX_MEMORY_LINES,
-    DEFAULT_MEMORY_DIR,
-    DEFAULT_MEMORY_FILENAME,
-    DEFAULT_PIN_END_MARKER,
-    AgentMemoryToolset,
-    MemoryAccessError,
-    MemoryFile,
-    format_memory_prompt,
-    get_memory_path,
-    load_memory,
 )
 from pydantic_deep.toolsets.plan import PlanOption
 from pydantic_deep.toolsets.skills import (
