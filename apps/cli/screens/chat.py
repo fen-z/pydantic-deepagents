@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
 )
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.screen import Screen
 
@@ -67,10 +67,9 @@ from apps.cli.widgets.input_area import InputArea
 from apps.cli.widgets.message_list import MessageList
 from apps.cli.widgets.notification import notify_error, notify_success, notify_warning
 from apps.cli.widgets.queued_panel import QueuedWidget
-from apps.cli.widgets.session_sidebar import SessionSidebar
-from apps.cli.widgets.side_panel import SidePanel
 from apps.cli.widgets.status_bar import StatusBar
 from apps.cli.widgets.subagents_panel import SubagentsWidget
+from apps.cli.widgets.todos_panel import TodosWidget
 from pydantic_deep.deps import DEFAULT_USAGE_LIMITS
 from pydantic_deep.features.forking.types import PendingApprovalRequest
 
@@ -273,34 +272,37 @@ class ChatScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield DeepHeader()
-        with Horizontal(id="main-layout"):
-            yield SessionSidebar()
-            with Vertical(id="messages-pane"):
-                yield MessageList()
-                yield ForkTabsWidget()
-                with Vertical(id="fork-view-body"):
-                    yield ForkOverviewWidget()
-            yield SidePanel()
+        with Vertical(id="messages-pane"):
+            yield MessageList()
+            yield ForkTabsWidget()
+            with Vertical(id="fork-view-body"):
+                yield ForkOverviewWidget()
         yield StatusBar()
-        yield InputArea()
+        # One bottom-docked column so the pieces stack instead of overlapping
+        # (sibling `dock: bottom` widgets all anchor to the same edge). The
+        # activity strip is pinned directly above the input: subagents sit right
+        # under the conversation, then the TODO list, then any queued messages.
+        # Each panel collapses when empty so the strip only shows when relevant.
+        with Vertical(id="bottom-bar"):
+            with Vertical(id="activity-dock"):
+                yield SubagentsWidget()
+                yield ForkBadgeWidget()
+                yield TodosWidget()
+                yield QueuedWidget()
+            yield InputArea()
 
     def on_mount(self) -> None:
         """Show welcome banner, init session, bootstrap context files, focus input."""
         self._init_session()
         self._bootstrap_context_files()
-        self._init_side_panel()
+        self._init_subagents()
         self.call_later(self._show_welcome)
         self.query_one(InputArea).focus_input()
 
     def on_resize(self, event: Any) -> None:
-        """Keep panels responsive to terminal width changes."""
-        width = self.app.size.width
-        self.query_one(SidePanel).update_for_width(width)
-        # Hide the session sidebar on narrow terminals so the conversation keeps room.
-        sidebar = self.query_one(SessionSidebar)
-        sidebar.set_class(width < 90, "hidden")
-        sidebar.refresh_session()
+        """Keep the footer responsive to terminal width changes."""
         self._refresh_session_footer()
+        self._sync_activity_dock()
 
     def _refresh_session_footer(self) -> None:
         from apps.cli.widgets.input_area import SessionFooter
@@ -308,12 +310,22 @@ class ChatScreen(Screen):
         with contextlib.suppress(Exception):
             self.query_one(SessionFooter).refresh_session()
 
-    def _init_side_panel(self) -> None:
-        """Show side panel and populate with default subagents."""
-        side = self.query_one(SidePanel)
-        side.update_for_width(self.app.size.width)
+    def _sync_activity_dock(self) -> None:
+        """Collapse the pinned activity strip when every panel is empty, so it
+        only takes space when subagents / todos / queued messages exist."""
+        with contextlib.suppress(Exception):
+            dock = self.query_one("#activity-dock")
+            panels = (
+                self.query_one(SubagentsWidget),
+                self.query_one(ForkBadgeWidget),
+                self.query_one(TodosWidget),
+                self.query_one(QueuedWidget),
+            )
+            dock.display = any(p.display for p in panels)
 
-        sa_widget = side.query_one(SubagentsWidget)
+    def _init_subagents(self) -> None:
+        """Seed the subagents panel baseline (hidden until one is active)."""
+        sa_widget = self.query_one(SubagentsWidget)
         defaults = []
         agent = self.app.agent
         if agent:
@@ -327,10 +339,11 @@ class ChatScreen(Screen):
                 {"name": "research", "status": "idle", "description": ""},
             ]
         # Remember the configured subagents so running tasks can be merged into
-        # this baseline instead of replacing it - idle agents stay visible
-        # (dimmed) rather than disappearing while one is active.
+        # this baseline instead of replacing it - idle agents stay tracked
+        # (though the panel only renders the active ones).
         self._known_subagents: list[str] = [d["name"] for d in defaults]
         sa_widget.agents = defaults
+        self._sync_activity_dock()
 
     def _bootstrap_context_files(self) -> None:
         """Create AGENTS.md, SOUL.md and MEMORY.md if they don't exist."""
@@ -544,9 +557,7 @@ class ChatScreen(Screen):
                 status.context_max = max_tokens
                 status.context_pct = total_input / max_tokens
 
-            # Keep the sidebar (tools/extensions) and footer (session/workspace) current.
-            with contextlib.suppress(Exception):
-                self.query_one(SessionSidebar).refresh_session()
+            # Keep the footer (session/workspace) current.
             self._refresh_session_footer()
         except Exception:
             from apps.cli.debug_log import get_logger
@@ -616,9 +627,7 @@ class ChatScreen(Screen):
         )
         msg_list.scroll_end(animate=False)
 
-        # Populate the capability sidebar + session footer now that deps are wired.
-        with contextlib.suppress(Exception):
-            self.query_one(SessionSidebar).refresh_session()
+        # Refresh the session footer now that deps are wired.
         self._refresh_session_footer()
 
     # User input handling
@@ -1366,19 +1375,23 @@ class ChatScreen(Screen):
             else:
                 with contextlib.suppress(Exception):
                     self.query_one(QueuedWidget).clear_steering()
+                self._sync_activity_dock()
 
     def _increment_queue_badge(self, *, steering: bool) -> None:
         with contextlib.suppress(Exception):
             w = self.query_one(QueuedWidget)
             w.increment_steering() if steering else w.increment_follow_up()
+        self._sync_activity_dock()
 
     def _decrement_queue_badge(self, follow_up_count: int = 1) -> None:
         with contextlib.suppress(Exception):
             self.query_one(QueuedWidget).decrement_follow_up(follow_up_count)
+        self._sync_activity_dock()
 
     def _reset_queue_badge(self) -> None:
         with contextlib.suppress(Exception):
             self.query_one(QueuedWidget).reset()
+        self._sync_activity_dock()
 
     async def _continue_goal(self) -> None:
         """Evaluate the active goal and drive another turn when not yet met.
@@ -1608,10 +1621,8 @@ class ChatScreen(Screen):
         todos = event.todos
         status.total_todos = len(todos)
         status.active_todos = sum(1 for t in todos if getattr(t, "status", "") == "completed")
-        side = self.query_one(SidePanel)
-        todos_widget = side.query_one("TodosWidget")
-        todos_widget.todos = todos  # type: ignore[attr-defined]
-        side.show_if_needed(self.app.size.width, len(todos) > 0)
+        self.query_one(TodosWidget).todos = todos
+        self._sync_activity_dock()
 
     def on_compression_started(self, _event: CompressionStarted) -> None:
         notify_warning(self.app, "Compacting context...")
@@ -1626,12 +1637,9 @@ class ChatScreen(Screen):
         subagent_tasks: dict[str, dict[str, Any]],
         team_event: tuple[str, dict[str, Any]] | None = None,
     ) -> None:
-        """Update the SubagentsWidget in the side panel with current task info."""
+        """Update the SubagentsWidget (pinned under the messages) with task info."""
         try:
-            from apps.cli.widgets.subagents_panel import SubagentsWidget
-
-            side = self.query_one(SidePanel)
-            sa_widget = side.query_one(SubagentsWidget)
+            sa_widget = self.query_one(SubagentsWidget)
 
             # Start from the known/idle baseline so configured subagents stay
             # visible (dimmed) while others run, then overlay live task status
@@ -1675,11 +1683,9 @@ class ChatScreen(Screen):
                     )
 
             sa_widget.agents = agents_list
-
-            if agents_list:
-                side.show_if_needed(self.app.size.width, True)
+            self._sync_activity_dock()
         except Exception:
-            pass  # Side panel may not be mounted yet
+            pass  # Panel may not be mounted yet
 
     # Actions
 
@@ -1735,6 +1741,7 @@ class ChatScreen(Screen):
 
         with contextlib.suppress(NoMatches):
             self.query_one(ForkBadgeWidget).show()
+        self._sync_activity_dock()
 
         self._poll_timer = self.set_interval(_FORK_POLL_INTERVAL_S, self._poll_fork_state)
 
@@ -1765,6 +1772,7 @@ class ChatScreen(Screen):
             self.query_one(ForkOverviewWidget).set_active(False)
         with contextlib.suppress(NoMatches):
             self.query_one(ForkBadgeWidget).hide()
+        self._sync_activity_dock()
         with contextlib.suppress(NoMatches):
             self.query_one(MessageList).display = True
 

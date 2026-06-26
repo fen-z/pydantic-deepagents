@@ -29,6 +29,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("/goal", "Keep working toward a condition (/goal <condition>, /goal clear)"),
     ("/help", "Show commands and shortcuts"),
     ("/improve", "Analyze sessions and self-improve"),
+    ("/info", "Show what's wired into the agent (tools, backend, MCP, context)"),
     ("/load", "Load a saved session"),
     ("/mcp", "Manage MCP servers (connect, login, test)"),
     ("/merge", "Resolve active fork — pick a winning branch"),

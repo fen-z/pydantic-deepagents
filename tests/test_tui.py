@@ -113,21 +113,17 @@ class TestTUIWidgets:
             visible = cell_len(markup.sub("", str(content.render())))
             assert visible <= 72
 
-    async def test_sidebar_lists_wired_capabilities(self, app):
+    async def test_info_modal_lists_wired_capabilities(self, app):
         async with app.run_test(size=(120, 34)) as pilot:
             await pilot.pause()
             await pilot.pause()
-            from textual.widgets import Static
+            from apps.cli.modals.info_view import build_info_markup
 
-            from apps.cli.widgets.session_sidebar import SessionSidebar
-
-            sidebar = app.screen.query_one(SessionSidebar)
-            text = str(sidebar.query_one("#sidebar-content", Static).render())
-            # Capability surface, not session metadata; no duplicate wordmark.
+            text = build_info_markup(app)
+            # Capability surface, on demand via /info.
             assert "tools" in text
             assert "read" in text and "bash" in text
             assert "extensions" in text
-            assert "pydantic-deep" not in text
 
     async def test_session_footer_shows_model_and_branch(self, app):
         async with app.run_test(size=(120, 34)) as pilot:

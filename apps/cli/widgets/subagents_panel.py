@@ -32,10 +32,14 @@ class SubagentsWidget(Widget):
         yield Static("", id="subagents-list")
 
     def watch_agents(self, agents: list[dict[str, Any]]) -> None:
-        content = self.query_one("#subagents-list", Static)
-        if not agents:
-            content.update("[$text-muted]None active[/]")
+        # Only surface when something is actually doing work — idle baseline
+        # agents stay hidden so the strip under the messages appears on demand.
+        active = [a for a in agents if a.get("status", "idle") not in ("idle", "")]
+        self.display = bool(active)
+        if not active:
             return
+        content = self.query_one("#subagents-list", Static)
+        agents = active
 
         glyphs = {
             "running": ("●", "$accent"),

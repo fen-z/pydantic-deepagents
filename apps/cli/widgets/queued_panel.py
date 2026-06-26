@@ -65,7 +65,7 @@ class QueuedWidget(Widget):
         if self.follow_up_count > 0:
             lines.append(f"[$accent]{self.follow_up_count}[/] follow-up")
 
+        # Collapse when nothing is queued — this widget is pinned above the input.
+        self.display = bool(lines)
         if lines:
-            content.update("\n".join(lines))
-        else:
-            content.update("[$text-muted]No queued messages[/]")
+            content.update("  ".join(lines))

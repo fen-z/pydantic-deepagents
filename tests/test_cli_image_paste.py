@@ -170,7 +170,6 @@ async def test_paste_action_delegates_to_screen(
 
 
 async def test_subagents_panel_keeps_idle_agents(app: DeepApp) -> None:
-    from apps.cli.widgets.side_panel import SidePanel
     from apps.cli.widgets.subagents_panel import SubagentsWidget
 
     async with app.run_test(size=(120, 35)) as pilot:
@@ -180,12 +179,12 @@ async def test_subagents_panel_keeps_idle_agents(app: DeepApp) -> None:
         known = screen._known_subagents
         assert "planner" in known and "research" in known
 
-        # One task running for 'planner'; 'research' must stay visible as idle.
+        # One task running for 'planner'; 'research' must stay tracked as idle.
         screen._update_subagents_panel(
             {"call-1": {"name": "planner", "status": "running", "description": "plan it"}}
         )
         await pilot.pause()
-        widget = app.screen.query_one(SidePanel).query_one(SubagentsWidget)
+        widget = app.screen.query_one(SubagentsWidget)
         names = [a["name"] for a in widget.agents]
         assert "planner" in names
         assert "research" in names  # idle one not dropped

@@ -43,10 +43,14 @@ class TodosWidget(Widget):
         yield Static("", id="todos-list")
 
     def watch_todos(self, todos: list[Any]) -> None:
-        content = self.query_one("#todos-list", Static)
+        # Collapse entirely when empty — this widget is pinned above the input,
+        # so an empty placeholder would just take a permanent row.
+        self.display = bool(todos)
         if not todos:
-            content.update("[$text-muted]No tasks yet[/]")
             return
+        content = self.query_one("#todos-list", Static)
+        done = sum(1 for t in todos if getattr(t, "status", "") == "completed")
+        self.query_one("#todos-title", Static).update(f"TODOs  [$text-muted]{done}/{len(todos)}[/]")
 
         lines = []
         for todo in todos:

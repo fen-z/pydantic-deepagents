@@ -309,16 +309,19 @@ async def _cmd_tokens(app: DeepApp, arg: str) -> None:
 
 
 async def _cmd_todos(app: DeepApp, arg: str) -> None:
-    from apps.cli.widgets.side_panel import SidePanel
+    # The TODO list is now pinned above the input whenever tasks exist, so this
+    # just reports the current state.
+    from apps.cli.widgets.todos_panel import TodosWidget
 
     try:
-        side = app.screen.query_one(SidePanel)
-        if side.has_class("visible"):
-            side.remove_class("visible")
-        else:
-            side.add_class("visible")
+        todos = list(app.screen.query_one(TodosWidget).todos)
     except Exception:
+        todos = []
+    if not todos:
         app.notify("No todos yet", severity="information")
+        return
+    done = sum(1 for t in todos if getattr(t, "status", "") == "completed")
+    app.notify(f"{done}/{len(todos)} todos complete — shown above the input")
 
 
 async def _cmd_paste(app: DeepApp, arg: str) -> None:
@@ -327,6 +330,12 @@ async def _cmd_paste(app: DeepApp, arg: str) -> None:
         handler()
     else:
         app.notify("Image paste is unavailable on this screen", severity="warning")
+
+
+async def _cmd_info(app: DeepApp, arg: str) -> None:
+    from apps.cli.modals.info_view import InfoModal
+
+    app.push_screen(InfoModal())
 
 
 async def _cmd_mcp(app: DeepApp, arg: str) -> None:
@@ -682,6 +691,7 @@ _COMMANDS: dict[str, CommandHandler] = {
     "/load": _cmd_load,
     "/improve": _cmd_improve,
     "/help": _cmd_help,
+    "/info": _cmd_info,
     "/provider": _cmd_provider,
     "/save": _cmd_save,
     "/theme": _cmd_theme,
