@@ -148,7 +148,7 @@ agent = create_deep_agent(include_plan=False)
 
 | Component | Description |
 |-----------|-------------|
-| [`create_plan_toolset`][pydantic_deep.toolsets.plan.create_plan_toolset] | Factory for plan tools |
+| [`create_plan_toolset`][pydantic_deep.features.plan.create_plan_toolset] | Factory for plan tools |
 | `PLANNER_INSTRUCTIONS` | Built-in planner system prompt |
 | `PLANNER_DESCRIPTION` | Planner subagent description |
 | `DEFAULT_PLANS_DIR` | Default plans directory: `/plans` |

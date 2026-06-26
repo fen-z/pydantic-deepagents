@@ -167,7 +167,7 @@ class BackendSkillScriptExecutor:
 
 ### 5. PlanToolset
 
-**Source:** `pydantic_deep/toolsets/plan/`
+**Source:** `pydantic_deep/features/plan/`
 
 **Tools:**
 - `ask_user` — Ask questions with predefined options (2-4 required)

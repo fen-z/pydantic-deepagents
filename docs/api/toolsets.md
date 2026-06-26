@@ -500,7 +500,7 @@ Interactive planning with ask_user and save_plan. See [Plan Mode](../advanced/pl
 ### Factory
 
 ```python
-from pydantic_deep.toolsets.plan import create_plan_toolset
+from pydantic_deep.features.plan import create_plan_toolset
 
 toolset = create_plan_toolset(
     plans_dir="/plans",
@@ -520,7 +520,7 @@ toolset = create_plan_toolset(
 
 Or via `create_deep_agent(include_plan=True)` (default).
 
-::: pydantic_deep.toolsets.plan.create_plan_toolset
+::: pydantic_deep.features.plan.create_plan_toolset
     options:
       show_source: false
 

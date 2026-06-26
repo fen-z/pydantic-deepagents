@@ -155,6 +155,7 @@ from pydantic_deep.features.patch import (
     PatchToolCallsCapability,
     patch_tool_calls_processor,
 )
+from pydantic_deep.features.plan import PlanOption
 from pydantic_deep.features.teams import (
     AgentTeam,
     SharedTodoItem,
@@ -257,7 +258,6 @@ from pydantic_deep.toolsets.liteparse import (
     SCREENSHOT_DOCUMENT_DESCRIPTION,
     LiteparseToolset,
 )
-from pydantic_deep.toolsets.plan import PlanOption
 from pydantic_deep.toolsets.skills import (
     BackendSkillResource,
     BackendSkillScript,
