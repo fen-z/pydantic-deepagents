@@ -12,7 +12,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from pydantic_deep import create_deep_agent
-from pydantic_deep.toolsets.skills import (
+from pydantic_deep.features.skills import (
     Skill,
     SkillNotFoundError,
     SkillResource,
@@ -20,7 +20,7 @@ from pydantic_deep.toolsets.skills import (
     SkillsToolset,
     SkillValidationError,
 )
-from pydantic_deep.toolsets.skills.directory import (
+from pydantic_deep.features.skills.directory import (
     _discover_resources,
     _discover_scripts,
     _discover_skills,
@@ -30,7 +30,7 @@ from pydantic_deep.toolsets.skills.directory import (
     _parse_skill_md_regex,
     _validate_skill_metadata,
 )
-from pydantic_deep.toolsets.skills.local import LocalSkillScriptExecutor
+from pydantic_deep.features.skills.local import LocalSkillScriptExecutor
 
 # Directory — _parse_skill_md_regex (fallback parser)
 
@@ -828,7 +828,7 @@ class TestDirectoryCoverageEdgeCases:
 
     def test_parse_skill_md_regex_line_without_colon(self) -> None:
         """Regex parser handles lines without colon in frontmatter."""
-        import pydantic_deep.toolsets.skills.directory as dir_module
+        import pydantic_deep.features.skills.directory as dir_module
 
         original = dir_module._HAS_YAML
         try:
@@ -849,7 +849,7 @@ class TestDirectoryCoverageEdgeCases:
 
     def test_parse_skill_md_no_yaml(self) -> None:
         """Test fallback to regex parser when pyyaml unavailable."""
-        import pydantic_deep.toolsets.skills.directory as dir_module
+        import pydantic_deep.features.skills.directory as dir_module
 
         original = dir_module._HAS_YAML
         try:
@@ -890,7 +890,7 @@ class TestDirectoryCoverageEdgeCases:
         symlink = skill_dir / "evil.py"
         symlink.symlink_to(outside)
 
-        from pydantic_deep.toolsets.skills.local import LocalSkillScriptExecutor
+        from pydantic_deep.features.skills.local import LocalSkillScriptExecutor
 
         executor = LocalSkillScriptExecutor(timeout=10)
 
@@ -959,7 +959,7 @@ class TestToolsetCoverageEdgeCases:
         assert "dynamic" in xml
 
     def test_build_script_xml_with_description(self) -> None:
-        from pydantic_deep.toolsets.skills import SkillScript
+        from pydantic_deep.features.skills import SkillScript
 
         script = SkillScript(name="run.py", uri="file:///run.py", description="Runs tests")
         toolset = SkillsToolset(skills=[], id="test")
@@ -969,7 +969,7 @@ class TestToolsetCoverageEdgeCases:
     def test_build_script_xml_with_function_schema(self) -> None:
         from unittest.mock import MagicMock
 
-        from pydantic_deep.toolsets.skills import SkillScript
+        from pydantic_deep.features.skills import SkillScript
 
         mock_schema = MagicMock()
         mock_schema.json_schema = {"type": "object", "properties": {}}
@@ -999,7 +999,7 @@ class TestToolsetCoverageEdgeCases:
 
     def test_build_script_xml_escapes_special_chars(self) -> None:
         """Script name/description with XML-special chars are escaped."""
-        from pydantic_deep.toolsets.skills import SkillScript
+        from pydantic_deep.features.skills import SkillScript
 
         script = SkillScript(
             name='x"><evil>',
@@ -1090,7 +1090,7 @@ class TestToolsetCoverageEdgeCases:
 
     async def test_find_script_with_multiple_scripts(self) -> None:
         """Find a script when skill has multiple scripts (loop iterates)."""
-        from pydantic_deep.toolsets.skills import SkillScript
+        from pydantic_deep.features.skills import SkillScript
 
         skill = Skill(
             name="test",
@@ -1162,7 +1162,7 @@ class TestToolsetCoverageEdgeCases:
 
     async def test_load_skill_with_scripts(self) -> None:
         """Load skill tool includes script XML."""
-        from pydantic_deep.toolsets.skills import SkillScript
+        from pydantic_deep.features.skills import SkillScript
 
         skill = Skill(
             name="test",
@@ -1218,7 +1218,7 @@ class TestToolsetCoverageEdgeCases:
 
     async def test_run_skill_script_via_tool(self, tmp_path: Path) -> None:
         """run_skill_script tool executes script and returns output."""
-        from pydantic_deep.toolsets.skills.local import (
+        from pydantic_deep.features.skills.local import (
             FileBasedSkillScript,
             LocalSkillScriptExecutor,
         )

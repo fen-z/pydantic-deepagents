@@ -32,7 +32,7 @@ from subagents_pydantic_ai import CompiledSubAgent as CompiledSubAgent
 from subagents_pydantic_ai import SubAgentConfig as SubAgentConfig
 
 # Re-export new Skill dataclass from skills package
-from pydantic_deep.toolsets.skills.types import Skill as Skill
+from pydantic_deep.features.skills.types import Skill as Skill
 
 # Re-export OutputSpec from pydantic-ai for structured output support
 ResponseFormat = OutputSpec[object]

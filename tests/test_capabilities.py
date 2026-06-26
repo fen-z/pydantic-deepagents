@@ -11,7 +11,7 @@ from pydantic_deep.capabilities import (
     MemoryCapability,
     SkillsCapability,
 )
-from pydantic_deep.toolsets.skills import Skill
+from pydantic_deep.features.skills import Skill
 
 _MODEL = TestModel()
 

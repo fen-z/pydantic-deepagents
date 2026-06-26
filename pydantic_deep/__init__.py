@@ -166,6 +166,27 @@ from pydantic_deep.features.patch import (
     patch_tool_calls_processor,
 )
 from pydantic_deep.features.plan import PlanOption
+from pydantic_deep.features.skills import (
+    BackendSkillResource,
+    BackendSkillScript,
+    BackendSkillScriptExecutor,
+    BackendSkillsDirectory,
+    CallableSkillScriptExecutor,
+    FileBasedSkillResource,
+    FileBasedSkillScript,
+    LocalSkillScriptExecutor,
+    Skill,
+    SkillException,
+    SkillNotFoundError,
+    SkillResource,
+    SkillResourceLoadError,
+    SkillResourceNotFoundError,
+    SkillScript,
+    SkillScriptExecutionError,
+    SkillsDirectory,
+    SkillValidationError,
+    SkillWrapper,
+)
 from pydantic_deep.features.teams import (
     AgentTeam,
     SharedTodoItem,
@@ -257,27 +278,6 @@ from pydantic_deep.toolsets.liteparse import (
     PARSE_DOCUMENT_DESCRIPTION,
     SCREENSHOT_DOCUMENT_DESCRIPTION,
     LiteparseToolset,
-)
-from pydantic_deep.toolsets.skills import (
-    BackendSkillResource,
-    BackendSkillScript,
-    BackendSkillScriptExecutor,
-    BackendSkillsDirectory,
-    CallableSkillScriptExecutor,
-    FileBasedSkillResource,
-    FileBasedSkillScript,
-    LocalSkillScriptExecutor,
-    Skill,
-    SkillException,
-    SkillNotFoundError,
-    SkillResource,
-    SkillResourceLoadError,
-    SkillResourceNotFoundError,
-    SkillScript,
-    SkillScriptExecutionError,
-    SkillsDirectory,
-    SkillValidationError,
-    SkillWrapper,
 )
 from pydantic_deep.types import (
     BrowseResult,

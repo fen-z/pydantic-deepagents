@@ -71,6 +71,8 @@ from pydantic_deep.features.plan import (
     PLANNER_INSTRUCTIONS,
     create_plan_toolset,
 )
+from pydantic_deep.features.skills import Skill, SkillsToolset
+from pydantic_deep.features.skills.backend import BackendSkillsDirectory
 from pydantic_deep.features.stuck_loop import StuckLoopDetection
 from pydantic_deep.features.teams import create_team_toolset
 from pydantic_deep.instructions import build_instruction_providers, render_instructions
@@ -85,8 +87,6 @@ from pydantic_deep.subagents import RESEARCH_SUBAGENT
 from pydantic_deep.toolsets.forking import create_fork_toolset
 from pydantic_deep.toolsets.forking.coordinator import _PerBranchCostTracking
 from pydantic_deep.toolsets.liteparse import LiteparseToolset
-from pydantic_deep.toolsets.skills import Skill, SkillsToolset
-from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
 from pydantic_deep.types import SubAgentConfig
 
 if TYPE_CHECKING:

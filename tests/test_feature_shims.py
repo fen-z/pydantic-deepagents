@@ -24,6 +24,7 @@ from pydantic_deep.features import message_queue as message_queue_feature
 from pydantic_deep.features import patch as patch_feature
 from pydantic_deep.features import periodic_reminder as periodic_reminder_feature
 from pydantic_deep.features import plan as plan_feature
+from pydantic_deep.features import skills as skills_feature
 from pydantic_deep.features import stuck_loop as stuck_loop_feature
 from pydantic_deep.features import teams as teams_feature
 
@@ -177,6 +178,48 @@ class TestCheckpointingShim:
         assert (
             pydantic_deep.InMemoryCheckpointStore is checkpointing_feature.InMemoryCheckpointStore
         )
+
+
+class TestSkillsShim:
+    def test_toolsets_skills_reexports_and_warns(self) -> None:
+        import pydantic_deep.toolsets.skills as shim
+
+        with pytest.warns(DeprecationWarning, match="features.skills"):
+            importlib.reload(shim)
+
+        assert shim.SkillsToolset is skills_feature.SkillsToolset
+        assert shim.Skill is skills_feature.Skill
+        assert shim.SkillsCapability is skills_feature.SkillsCapability
+
+    def test_skills_submodule_shims_resolve(self) -> None:
+        # Every documented deep submodule path still resolves through its shim.
+        from pydantic_deep.features.skills import backend as feat_backend
+        from pydantic_deep.features.skills import directory as feat_directory
+        from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
+        from pydantic_deep.toolsets.skills.directory import SkillsDirectory
+        from pydantic_deep.toolsets.skills.exceptions import SkillException
+        from pydantic_deep.toolsets.skills.local import LocalSkillScriptExecutor
+        from pydantic_deep.toolsets.skills.toolset import SkillsToolset
+        from pydantic_deep.toolsets.skills.types import Skill as ShimSkill
+
+        assert BackendSkillsDirectory is feat_backend.BackendSkillsDirectory
+        assert SkillsDirectory is feat_directory.SkillsDirectory
+        assert ShimSkill is skills_feature.Skill
+        assert SkillException is skills_feature.SkillException
+        assert LocalSkillScriptExecutor is skills_feature.LocalSkillScriptExecutor
+        assert SkillsToolset is skills_feature.SkillsToolset
+
+    def test_capabilities_skills_reexports_and_warns(self) -> None:
+        import pydantic_deep.capabilities.skills as shim
+
+        with pytest.warns(DeprecationWarning, match="features.skills"):
+            importlib.reload(shim)
+
+        assert shim.SkillsCapability is skills_feature.SkillsCapability
+
+    def test_top_level_exports_stable(self) -> None:
+        assert pydantic_deep.SkillsToolset is skills_feature.SkillsToolset
+        assert pydantic_deep.SkillsCapability is skills_feature.SkillsCapability
 
 
 class TestPlanShim:

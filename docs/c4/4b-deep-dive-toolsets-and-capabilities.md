@@ -65,7 +65,7 @@ Toolsets are `FunctionToolset` or `AbstractToolset` instances registered on the 
 
 ### 4. SkillsToolset
 
-**Source:** `pydantic_deep/toolsets/skills/`
+**Source:** `pydantic_deep/features/skills/`
 
 **Tools:**
 - `list_skills` — List all discovered skills
@@ -491,7 +491,7 @@ Wraps `create_plan_toolset()` providing `ask_user` and `save_plan` tools.
 
 ### 5. SkillsCapability
 
-**Source:** `pydantic_deep/capabilities/skills.py`
+**Source:** `pydantic_deep/features/skills/capability.py`
 
 Wraps `SkillsToolset` with skill discovery, loading, and instruction injection.
 

@@ -9,7 +9,7 @@ import pytest
 from pydantic_ai_backends import StateBackend, ensure_async
 from pydantic_ai_backends.types import ExecuteResponse
 
-from pydantic_deep.toolsets.skills.backend import (
+from pydantic_deep.features.skills.backend import (
     BackendSkillResource,
     BackendSkillScript,
     BackendSkillScriptExecutor,
@@ -21,13 +21,13 @@ from pydantic_deep.toolsets.skills.backend import (
     create_backend_resource,
     create_backend_script,
 )
-from pydantic_deep.toolsets.skills.exceptions import (
+from pydantic_deep.features.skills.exceptions import (
     SkillResourceLoadError,
     SkillScriptExecutionError,
     SkillValidationError,
 )
-from pydantic_deep.toolsets.skills.toolset import SkillsToolset
-from pydantic_deep.toolsets.skills.types import SkillScript
+from pydantic_deep.features.skills.toolset import SkillsToolset
+from pydantic_deep.features.skills.types import SkillScript
 
 # Helper: create a mock SandboxProtocol (StateBackend + execute)
 
@@ -216,7 +216,7 @@ class TestBackendSkillScriptExecutor:
     """Tests for BackendSkillScriptExecutor."""
 
     def _make_script(self, name: str = "test.py", uri: str = "/skills/test/test.py") -> SkillScript:
-        from pydantic_deep.toolsets.skills.types import SkillScript
+        from pydantic_deep.features.skills.types import SkillScript
 
         return SkillScript(
             name=name,
@@ -734,7 +734,7 @@ class TestCoverageEdgeCases:
 
     async def test_yaml_without_pyyaml(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test YAML resource loading when pyyaml is not available."""
-        import pydantic_deep.toolsets.skills.backend as backend_mod
+        import pydantic_deep.features.skills.backend as backend_mod
 
         monkeypatch.setattr(backend_mod, "_HAS_YAML", False)
 

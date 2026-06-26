@@ -586,7 +586,7 @@ agent = create_deep_agent(
 Or provide skills directly via a `SkillsToolset`:
 
 ```python
-from pydantic_deep.toolsets.skills import Skill, SkillsToolset
+from pydantic_deep.features.skills import Skill, SkillsToolset
 
 skill = Skill(name="code-review", description="Review code for quality", content="...")
 agent = create_deep_agent(

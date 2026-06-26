@@ -9,9 +9,9 @@ from pydantic_ai_todo import create_todo_toolset as TodoToolset
 from subagents_pydantic_ai import SubAgentToolset
 
 from pydantic_deep.features.plan import PlanOption, create_plan_toolset
+from pydantic_deep.features.skills import SkillsToolset
 from pydantic_deep.features.teams import TeamMemberSpec, create_team_toolset
 from pydantic_deep.toolsets.liteparse import LiteparseToolset
-from pydantic_deep.toolsets.skills import SkillsToolset
 
 __all__ = [
     "TodoToolset",

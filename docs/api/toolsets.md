@@ -265,7 +265,7 @@ Modular capability tools.
 `SkillsToolset` is constructed directly (there is no separate factory function):
 
 ```python
-from pydantic_deep.toolsets.skills import SkillsToolset
+from pydantic_deep.features.skills import SkillsToolset
 
 toolset = SkillsToolset(
     skills=[...],
@@ -334,7 +334,7 @@ Read a resource file from a skill.
 #### Skill
 
 `Skill` is a dataclass (accessed via attributes, not dict keys). See
-[`Skill`][pydantic_deep.toolsets.skills.types.Skill] and the
+[`Skill`][pydantic_deep.features.skills.types.Skill] and the
 [Types reference](types.md#skill).
 
 ```python
@@ -354,7 +354,7 @@ class Skill:
 #### SkillsDirectory
 
 A filesystem skill source. See
-[`SkillsDirectory`][pydantic_deep.toolsets.skills.directory.SkillsDirectory].
+[`SkillsDirectory`][pydantic_deep.features.skills.directory.SkillsDirectory].
 
 ```python
 class SkillsDirectory:
@@ -548,14 +548,14 @@ toolset = ContextToolset(
 ## Skill Discovery
 
 Skill discovery is handled by the
-[`SkillsDirectory`][pydantic_deep.toolsets.skills.directory.SkillsDirectory] and
-[`BackendSkillsDirectory`][pydantic_deep.toolsets.skills.backend.BackendSkillsDirectory]
+[`SkillsDirectory`][pydantic_deep.features.skills.directory.SkillsDirectory] and
+[`BackendSkillsDirectory`][pydantic_deep.features.skills.backend.BackendSkillsDirectory]
 classes (frontmatter parsing and directory traversal are internal implementation
 details). Pass these directly to `SkillsToolset` or to `create_deep_agent` via
 `skill_directories`:
 
 ```python
-from pydantic_deep.toolsets.skills import SkillsDirectory, SkillsToolset
+from pydantic_deep.features.skills import SkillsDirectory, SkillsToolset
 
 source = SkillsDirectory(path="~/.pydantic-deep/skills")
 skills = source.get_skills()  # dict[str, Skill]
@@ -565,19 +565,19 @@ toolset = SkillsToolset(directories=[source])
 
 ### Skill
 
-::: pydantic_deep.toolsets.skills.types.Skill
+::: pydantic_deep.features.skills.types.Skill
     options:
       show_source: false
 
 ### SkillsDirectory
 
-::: pydantic_deep.toolsets.skills.directory.SkillsDirectory
+::: pydantic_deep.features.skills.directory.SkillsDirectory
     options:
       show_source: false
 
 ### BackendSkillsDirectory
 
-::: pydantic_deep.toolsets.skills.backend.BackendSkillsDirectory
+::: pydantic_deep.features.skills.backend.BackendSkillsDirectory
     options:
       show_source: false
 

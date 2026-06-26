@@ -134,7 +134,7 @@ Backends also back the [skills system](skills.md#skills-with-backends). Point
 (a `StateBackend`, a `DockerSandbox`, …) rather than on the local filesystem:
 
 ```python
-from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
+from pydantic_deep.features.skills.backend import BackendSkillsDirectory
 
 agent = create_deep_agent(
     skill_directories=[BackendSkillsDirectory(backend=sandbox, path="/skills")],

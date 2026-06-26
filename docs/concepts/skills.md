@@ -208,12 +208,12 @@ EOF
 
 ### From Directories
 
-Use [`SkillsDirectory`][pydantic_deep.toolsets.skills.directory.SkillsDirectory]
+Use [`SkillsDirectory`][pydantic_deep.features.skills.directory.SkillsDirectory]
 to discover skills from a filesystem directory. `get_skills()` returns a
 `dict[str, Skill]` keyed by skill name:
 
 ```python
-from pydantic_deep.toolsets.skills import SkillsDirectory
+from pydantic_deep.features.skills import SkillsDirectory
 
 source = SkillsDirectory(path="~/.pydantic-deep/skills")
 
@@ -226,7 +226,7 @@ for name, skill in source.get_skills().items():
 To pass skills directly (without filesystem discovery), use a `SkillsToolset`:
 
 ```python
-from pydantic_deep.toolsets.skills import Skill, SkillsToolset
+from pydantic_deep.features.skills import Skill, SkillsToolset
 
 skill = Skill(name="code-review", description="Review code for quality", content="...")
 agent = create_deep_agent(
@@ -377,7 +377,7 @@ The cache persists for the lifetime of the agent instance. Each agent has its ow
 
 ### Discovery Performance
 
-Skill discovery (via [`SkillsDirectory`][pydantic_deep.toolsets.skills.directory.SkillsDirectory]) scans directories on agent creation:
+Skill discovery (via [`SkillsDirectory`][pydantic_deep.features.skills.directory.SkillsDirectory]) scans directories on agent creation:
 
 | Factor | Impact |
 |--------|--------|
@@ -444,7 +444,7 @@ agent = create_deep_agent(
 
 By default, `skill_directories` accepts local filesystem paths (strings or dicts).
 For non-local backends (in-memory, Docker, remote storage), use
-[`BackendSkillsDirectory`][pydantic_deep.toolsets.skills.backend.BackendSkillsDirectory]
+[`BackendSkillsDirectory`][pydantic_deep.features.skills.backend.BackendSkillsDirectory]
 which discovers skills via the backend's file operations.
 
 ### StateBackend (In-Memory)
@@ -455,7 +455,7 @@ then point `BackendSkillsDirectory` at them:
 ```python
 from pydantic_ai_backends import StateBackend
 from pydantic_deep import create_deep_agent
-from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
+from pydantic_deep.features.skills.backend import BackendSkillsDirectory
 
 backend = StateBackend()
 
@@ -489,7 +489,7 @@ instead of direct filesystem access. This ensures consistent path resolution:
 ```python
 from pydantic_ai_backends import LocalBackend
 from pydantic_deep import create_deep_agent
-from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
+from pydantic_deep.features.skills.backend import BackendSkillsDirectory
 
 backend = LocalBackend(root_dir="/home/user/project")
 
@@ -508,7 +508,7 @@ run inside the container:
 ```python
 from pydantic_ai_backends import DockerSandbox
 from pydantic_deep import create_deep_agent
-from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
+from pydantic_deep.features.skills.backend import BackendSkillsDirectory
 
 sandbox = DockerSandbox(runtime="python-minimal")
 
