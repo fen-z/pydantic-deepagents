@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
@@ -51,55 +53,56 @@ class SettingsScreen(Screen):
 
     def __init__(self) -> None:
         super().__init__()
-        self._config = None
-        self._config_path = None
+        self._config: CliConfig | None = None
+        self._config_path: Path | None = None
 
     def compose(self) -> ComposeResult:
-        self._config = load_config()
+        config = load_config()
+        self._config = config
         self._config_path = DEFAULT_CONFIG_PATH
 
         with VerticalScroll(id="settings-scroll"):
-            yield Static("[bold]Settings[/bold]  [dim]({self._config_path})[/dim]\n")
+            yield Static(f"[bold]Settings[/bold]  [dim]({self._config_path})[/dim]\n")
 
             # ── Model ──
             yield Static("Model", classes="section-title")
-            yield Input(value=self._config.model, id="cfg-model")
+            yield Input(value=config.model, id="cfg-model")
 
             # ── Features ──
             yield Static("Features", classes="section-title")
-            yield Checkbox("Skills", value=self._config.include_skills, id="cfg-include_skills")
-            yield Checkbox("Memory", value=self._config.include_memory, id="cfg-include_memory")
+            yield Checkbox("Skills", value=config.include_skills, id="cfg-include_skills")
+            yield Checkbox("Memory", value=config.include_memory, id="cfg-include_memory")
             yield Checkbox(
-                "Subagents", value=self._config.include_subagents, id="cfg-include_subagents"
+                "Subagents", value=config.include_subagents, id="cfg-include_subagents"
             )
-            yield Checkbox("Todo list", value=self._config.include_todo, id="cfg-include_todo")
-            yield Checkbox("Plan mode", value=self._config.include_plan, id="cfg-include_plan")
-            yield Checkbox("Web search", value=self._config.web_search, id="cfg-web_search")
-            yield Checkbox("Web fetch", value=self._config.web_fetch, id="cfg-web_fetch")
-            yield Checkbox("Teams", value=self._config.include_teams, id="cfg-include_teams")
+            yield Checkbox("Todo list", value=config.include_todo, id="cfg-include_todo")
+            yield Checkbox("Plan mode", value=config.include_plan, id="cfg-include_plan")
+            yield Checkbox("Web search", value=config.web_search, id="cfg-web_search")
+            yield Checkbox("Web fetch", value=config.web_fetch, id="cfg-web_fetch")
+            yield Checkbox("Teams", value=config.include_teams, id="cfg-include_teams")
             yield Checkbox(
                 "Context discovery",
-                value=self._config.context_discovery,
+                value=config.context_discovery,
                 id="cfg-context_discovery",
             )
 
             # ── Display ──
             yield Static("Display", classes="section-title")
-            yield Checkbox("Show cost", value=self._config.show_cost, id="cfg-show_cost")
-            yield Checkbox("Show tokens", value=self._config.show_tokens, id="cfg-show_tokens")
+            yield Checkbox("Show cost", value=config.show_cost, id="cfg-show_cost")
+            yield Checkbox("Show tokens", value=config.show_tokens, id="cfg-show_tokens")
 
             # ── Advanced ──
             yield Static("Advanced", classes="section-title")
             yield Static("Approve tools (comma-separated)", classes="setting-label")
             yield Input(
-                value=", ".join(self._config.approve_tools),
+                value=", ".join(config.approve_tools),
                 id="cfg-approve_tools",
             )
             yield Static("Thinking effort (high/medium/low)", classes="setting-label")
-            yield Input(value=self._config.thinking_effort, id="cfg-thinking_effort")
+            yield Input(value=config.thinking_effort, id="cfg-thinking_effort")
             yield Static("Temperature (leave empty for default)", classes="setting-label")
             yield Input(
-                value=str(self._config.temperature) if self._config.temperature is not None else "",
+                value=str(config.temperature) if config.temperature is not None else "",
                 id="cfg-temperature",
                 placeholder="e.g. 0.7",
             )
