@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,8 @@ _STATE_DIR = ".pydantic-deep"
 _STATE_FILE = "improve_state.json"
 
 
-ProgressCallback = Any  # Callable[[str, int, int], None]  (stage, current, total)
+ProgressCallback = Callable[[str, int, int], None]
+"""Progress callback receiving (stage, current, total)."""
 
 
 def _parse_md_heading(line: str) -> tuple[int, str] | None:

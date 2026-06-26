@@ -15,6 +15,9 @@ from pydantic_ai import Agent
 from pydantic_deep.improve.prompts import SYNTHESIS_PROMPT
 from pydantic_deep.improve.types import ProposedChange, SessionInsights
 
+MAX_TOOL_SEQUENCE_CHARS = 8000
+"""Per-session cap on raw tool-sequence text in the synthesis prompt."""
+
 
 class _SynthesisOutput(BaseModel):
     """Structured output for the synthesis agent."""
@@ -101,9 +104,10 @@ class InsightSynthesizer:
         for session_id, sequence in sequences.items():
             if sequence.strip():
                 # Cap per-session to avoid blowing context
-                truncated = sequence[:8000]
-                if len(sequence) > 8000:
-                    truncated += f"\n  ... ({len(sequence) - 8000} chars truncated)"
+                truncated = sequence[:MAX_TOOL_SEQUENCE_CHARS]
+                if len(sequence) > MAX_TOOL_SEQUENCE_CHARS:
+                    extra = len(sequence) - MAX_TOOL_SEQUENCE_CHARS
+                    truncated += f"\n  ... ({extra} chars truncated)"
                 parts.append(f"### Session {session_id}\n\n{truncated}")
         return "\n\n".join(parts)
 
