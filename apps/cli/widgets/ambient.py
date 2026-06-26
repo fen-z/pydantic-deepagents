@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 
 from textual.color import Color
+from textual.reactive import reactive
 from textual.widgets import Static
 
 #: ~20 fps — smooth without being busy. One shared cadence for all ambients.
@@ -110,4 +111,81 @@ class AmbientBand(Static):
         self.update(" ".join(cells))
 
 
-__all__ = ["AmbientBand"]
+class GenSquares(Static):
+    """A short vertical stack of squares shown to the left of the prompt.
+
+    Idle it is a faint static column; while the agent is generating (``active``)
+    the squares pulse in a downward travelling wave in the theme accent — the
+    "thinking" indicator used by modern coding CLIs. A self-updating ``Static``
+    (multi-line), so it clips to its own width and never spills into the input.
+    """
+
+    DEFAULT_CSS = """
+    GenSquares {
+        width: 3;
+        height: 3;
+        content-align: left middle;
+    }
+    """
+
+    active: reactive[bool] = reactive(False)
+
+    def __init__(
+        self,
+        *,
+        rows: int = 3,
+        glyph: str = "■",
+        speed: float = 0.42,
+        spread: float = 0.95,
+        idle_level: float = 0.22,
+        id: str | None = None,
+    ) -> None:
+        super().__init__(id=id)
+        self._rows = rows
+        self._glyph = glyph
+        self._speed = speed
+        self._spread = spread
+        self._idle = idle_level
+        self._phase = 0.0
+
+    def on_mount(self) -> None:
+        self.set_interval(_TICK_S, self._advance)
+        self._repaint()
+
+    def watch_active(self, _active: bool) -> None:
+        self._phase = 0.0
+        self._repaint()
+
+    def _advance(self) -> None:
+        if not self.active or not self.display:
+            return
+        self._phase += self._speed
+        self._repaint()
+
+    def _palette(self) -> tuple[Color, Color]:
+        dim = Color.parse(_FALLBACK_DIM)
+        bright = Color.parse(_FALLBACK_BRIGHT)
+        theme = getattr(self.app, "current_theme", None)
+        if theme is not None:
+            try:
+                bright = Color.parse(theme.accent or theme.primary)
+                base = Color.parse(theme.background) if theme.background else dim
+                dim = base.blend(bright, 0.16)
+            except Exception:
+                pass
+        return dim, bright
+
+    def _repaint(self) -> None:
+        dim, bright = self._palette()
+        lines: list[str] = []
+        for i in range(self._rows):
+            if self.active:
+                wave = (math.sin(self._phase - i * self._spread) + 1.0) / 2.0
+                t = 0.12 + 0.88 * _smoothstep(wave)
+            else:
+                t = self._idle
+            lines.append(f"[{dim.blend(bright, t).hex}]{self._glyph}[/]")
+        self.update("\n".join(lines))
+
+
+__all__ = ["AmbientBand", "GenSquares"]

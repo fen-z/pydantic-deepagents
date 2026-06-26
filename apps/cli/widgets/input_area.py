@@ -6,6 +6,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Input, Static, TextArea
@@ -16,6 +17,7 @@ from apps.cli.messages import (
     PasteImageRequested,
     UserSubmitted,
 )
+from apps.cli.widgets.ambient import GenSquares
 
 
 class HintsBar(Static):
@@ -103,12 +105,12 @@ class PromptInput(Input):
 
     DEFAULT_CSS = """
     PromptInput {
-        dock: bottom;
         margin: 0 0;
         border: none;
         padding: 0 0;
         height: 1;
         width: 1fr;
+        background: transparent;
     }
     PromptInput:focus {
         border: none;
@@ -182,9 +184,10 @@ class MultilineInput(TextArea):
         height: auto;
         max-height: 8;
         min-height: 3;
-        margin: 0 2;
-        border: tall $accent;
-        padding: 0 1;
+        margin: 0;
+        border: none;
+        padding: 0;
+        background: transparent;
     }
     """
 
@@ -210,7 +213,23 @@ class InputArea(Vertical):
     InputArea {
         dock: bottom;
         height: auto;
-        max-height: 10;
+        max-height: 12;
+        padding: 0 1 0 1;
+    }
+    InputArea #prompt-shell {
+        height: auto;
+    }
+    InputArea #gen-squares {
+        margin: 0 1 0 0;
+    }
+    InputArea #prompt-box {
+        width: 1fr;
+        height: auto;
+        border: round $panel;
+        padding: 0 1;
+    }
+    InputArea #prompt-box:focus-within {
+        border: round $accent;
     }
     """
 
@@ -221,9 +240,12 @@ class InputArea(Vertical):
         """Request to exit multiline mode."""
 
     def compose(self) -> ComposeResult:
-        with PromptRow():
-            yield PromptPrefix()
-            yield PromptInput()
+        with Horizontal(id="prompt-shell"):
+            yield GenSquares(id="gen-squares")
+            with Vertical(id="prompt-box"):  # noqa: SIM117 - distinct nesting levels
+                with PromptRow():
+                    yield PromptPrefix()
+                    yield PromptInput()
         yield HintsBar()
 
     @staticmethod
@@ -231,6 +253,9 @@ class InputArea(Vertical):
         return "[$accent]>>[/] steer   write to queue   [$accent]Esc[/] interrupt"
 
     def watch_is_agent_running(self, running: bool) -> None:
+        # Light up the squares to the left of the prompt while generating.
+        for squares in self.query("#gen-squares").results(GenSquares):
+            squares.active = running
         if self.is_multiline:
             return
         hints = self.query_one(HintsBar)
@@ -240,24 +265,34 @@ class InputArea(Vertical):
             hints.reset()
 
     def watch_is_multiline(self, multiline: bool) -> None:
-        prompt_rows = self.query("PromptRow")
-        multi = self.query("MultilineInput")
+        try:
+            box = self.query_one("#prompt-box", Vertical)
+        except NoMatches:
+            return  # not composed yet
         hints = self.query_one(HintsBar)
+        has_multi = bool(box.query("MultilineInput"))
+        has_single = bool(box.query("PromptRow"))
+
+        # Idempotent: the reactive fires once at mount with the composed state
+        # already in place, so don't rebuild (that duplicated the prompt row).
+        if multiline and has_multi:
+            return
+        if not multiline and has_single and not has_multi:
+            return
 
         if multiline:
-            for pr in prompt_rows:
+            for pr in box.query("PromptRow"):
                 pr.remove()
-            self.mount(MultilineInput(), before=hints)
+            box.mount(MultilineInput())
             hints.update(
-                "[dim]Ctrl+J[/dim] send   [dim]Esc[/dim] cancel   [dim]Enter[/dim] new line"
+                "[$accent]Ctrl+J[/] send   [$accent]Esc[/] cancel   [$accent]Enter[/] new line"
             )
-            multi_widget = self.query_one(MultilineInput)
-            multi_widget.focus()
+            self.query_one(MultilineInput).focus()
         else:
-            for m in multi:
+            for m in box.query("MultilineInput"):
                 m.remove()
             row = PromptRow()
-            self.mount(row, before=hints)
+            box.mount(row)
             row.mount(PromptPrefix())
             p = PromptInput()
             row.mount(p)

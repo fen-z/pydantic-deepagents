@@ -77,6 +77,35 @@ class TestTUIWidgets:
             visible = cell_len(markup.sub("", str(content.render())))
             assert visible <= 72
 
+    async def test_prompt_has_single_row_and_gen_squares(self, app):
+        async with app.run_test(size=(100, 32)) as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            from apps.cli.widgets.ambient import GenSquares
+            from apps.cli.widgets.input_area import PromptInput
+
+            box = app.screen.query_one("#prompt-box")
+            # Exactly one prompt row — guards the reactive-init double-mount bug.
+            assert len(box.query("PromptRow")) == 1
+            assert len(box.query(PromptInput)) == 1
+            assert len(app.screen.query(GenSquares)) == 1
+
+    async def test_gen_squares_animate_while_generating(self, app):
+        async with app.run_test(size=(100, 32)) as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            from apps.cli.widgets.ambient import GenSquares
+            from apps.cli.widgets.input_area import InputArea
+
+            squares = app.screen.query_one(GenSquares)
+            assert squares.active is False
+            app.screen.query_one(InputArea).is_agent_running = True
+            await pilot.pause()
+            assert squares.active is True
+            app.screen.query_one(InputArea).is_agent_running = False
+            await pilot.pause()
+            assert squares.active is False
+
     async def test_user_message(self, app):
         async with app.run_test(size=(120, 35)) as pilot:
             await pilot.pause()
