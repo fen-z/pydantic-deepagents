@@ -1142,13 +1142,6 @@ def create_deep_agent(  # noqa: C901
 
     all_processors: list[Any] = list(history_processors or [])
 
-    # patch_tool_calls capability is added later (see capabilities section below).
-    _patch_tool_calls = patch_tool_calls
-
-    _eviction_token_limit = eviction_token_limit
-    _max_binary_content = max_binary_content
-    _on_eviction = on_eviction
-
     # Resolve history_messages_path to absolute for the middleware
     abs_messages_path: str | None = None
     if include_history_archive and context_manager:
@@ -1236,20 +1229,20 @@ def create_deep_agent(  # noqa: C901
     if _todo_proxy is not None:
         all_capabilities.append(_TodoProxyBinder(_todo_proxy))
 
-    if _patch_tool_calls:
+    if patch_tool_calls:
         from pydantic_deep.processors.patch import PatchToolCallsCapability
 
         all_capabilities.append(PatchToolCallsCapability())
 
-    if _eviction_token_limit is not None:
+    if eviction_token_limit is not None:
         from pydantic_deep.processors.eviction import EvictionCapability
 
         all_capabilities.append(
             EvictionCapability(
                 backend=ensure_async(backend),
-                token_limit=_eviction_token_limit,
-                max_binary_content=_max_binary_content,
-                on_eviction=_on_eviction,
+                token_limit=eviction_token_limit,
+                max_binary_content=max_binary_content,
+                on_eviction=on_eviction,
             )
         )
 

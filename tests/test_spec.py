@@ -53,8 +53,10 @@ class TestDeepAgentSpec:
         """
         params = inspect.signature(create_deep_agent).parameters
         for field_name, field in DeepAgentSpec.model_fields.items():
-            if field_name not in params:
-                continue
+            assert field_name in params, (
+                f"DeepAgentSpec.{field_name} has no matching create_deep_agent "
+                f"parameter - the spec has drifted out of sync with the factory"
+            )
             factory_default = params[field_name].default
             assert field.default == factory_default, (
                 f"DeepAgentSpec.{field_name} default {field.default!r} does not "
