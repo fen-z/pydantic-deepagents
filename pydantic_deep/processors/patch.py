@@ -1,4 +1,4 @@
-"""PatchToolCallsProcessor: fix orphaned tool calls in message history.
+"""Fix orphaned tool calls in message history.
 
 When a conversation is interrupted (user cancellation, tool crash, incomplete
 checkpoint) or context management evicts messages, the history may contain:
@@ -8,14 +8,16 @@ checkpoint) or context management evicts messages, the history may contain:
 2. **Orphaned tool results**: ModelRequest with ToolReturnParts that have no
    matching ToolCallPart in the preceding ModelResponse.
 
-Both cases cause errors with most LLM APIs. This processor fixes both.
+Both cases cause errors with most LLM APIs. `patch_tool_calls_processor` is the
+pure repair function (reused by the CLI on resume); `PatchToolCallsCapability`
+is the lifecycle adapter wired into agents via `patch_tool_calls=True`.
 
 Example:
     ```python
     from pydantic_deep import create_deep_agent
 
     agent = create_deep_agent(
-        patch_tool_calls=True,  # Enables PatchToolCallsProcessor
+        patch_tool_calls=True,  # Enables PatchToolCallsCapability
     )
     ```
 """

@@ -87,7 +87,6 @@ class TestDeepAgentSpec:
         """Serializable create_deep_agent() params are accepted as spec fields."""
         spec = DeepAgentSpec(
             fallback_model="anthropic:claude-haiku-4-5",
-            base_prompt="custom",
             max_binary_content=5,
             include_improve=True,
             include_liteparse=True,
@@ -96,7 +95,6 @@ class TestDeepAgentSpec:
             forking=False,
         )
         assert spec.fallback_model == "anthropic:claude-haiku-4-5"
-        assert spec.base_prompt == "custom"
         assert spec.max_binary_content == 5
         assert spec.include_improve is True
         assert spec.include_liteparse is True
@@ -108,7 +106,6 @@ class TestDeepAgentSpec:
         """A spec dict setting these params loads instead of raising ValidationError."""
         agent, _deps = DeepAgent.from_spec(
             {
-                "base_prompt": "custom",
                 "max_binary_content": 5,
                 "include_improve": True,
                 "include_liteparse": True,

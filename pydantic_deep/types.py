@@ -98,15 +98,12 @@ class BranchSpec:
             :class:`_BudgetWatcher`: when the branch's `CostTracking`
             cumulative cost crosses this cap the branch is cancelled and
             transitions to :data:`BranchState` `"budget_exhausted"`.
-        extra_instructions: Optional extra instructions appended to the
-            branch's system prompt.
     """
 
     label: str
     steer: str
     model: str | None = None
     budget_usd: float | None = None
-    extra_instructions: str | None = None
 
 
 @_dataclass(frozen=True)

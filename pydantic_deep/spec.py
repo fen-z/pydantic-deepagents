@@ -59,7 +59,6 @@ class DeepAgentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str | None = None
     fallback_model: str | list[str] | None = None
-    base_prompt: str | None = None
     instructions: str | None = None
     output_style: str | None = None
     styles_dir: str | list[str] | None = None

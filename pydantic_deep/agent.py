@@ -340,7 +340,6 @@ def create_deep_agent(
     fallback_model: str | Model | list[str | Model] | None = None,
     model_settings: dict[str, Any] | None = None,
     summarization_model: str | None = None,
-    base_prompt: str | None = None,
     instructions: str | None = None,
     output_style: str | Any | None = None,
     styles_dir: str | list[str] | None = None,
@@ -418,7 +417,6 @@ def create_deep_agent(
     fallback_model: str | Model | list[str | Model] | None = None,
     model_settings: dict[str, Any] | None = None,
     summarization_model: str | None = None,
-    base_prompt: str | None = None,
     instructions: str | None = None,
     output_style: str | Any | None = None,
     styles_dir: str | list[str] | None = None,
@@ -496,7 +494,6 @@ def create_deep_agent(  # noqa: C901
     fallback_model: str | Model | list[str | Model] | None = None,
     model_settings: dict[str, Any] | None = None,
     summarization_model: str | None = None,
-    base_prompt: str | None = None,
     instructions: str | None = None,
     output_style: str | Any | None = None,
     styles_dir: str | list[str] | None = None,
@@ -589,10 +586,9 @@ def create_deep_agent(  # noqa: C901
             `pydantic_deep` to build on top of it:
             `instructions=f"{BASE_PROMPT}\\n\\nYour extra instructions"`.
         output_style: Output style to apply to agent responses. Can be a
-            string name of a built-in style ("concise", "explanatory",
-            "formal", "conversational"), a custom OutputStyle instance,
-            or a string name to look up in styles_dir. None (default)
-            means no style override.
+            built-in style name (a key of `BUILTIN_STYLES`), a custom
+            OutputStyle instance, or a name to look up in styles_dir. None
+            (default) means no style override.
         styles_dir: Directory or list of directories to discover custom
             output styles from. Style files are markdown files with
             YAML frontmatter (name, description) in the directory root.
@@ -705,7 +701,7 @@ def create_deep_agent(  # noqa: C901
         on_cost_update: Callback for cost updates after each run.
             Called with a CostInfo object containing run and cumulative
             token/cost data. Supports sync and async callables.
-        patch_tool_calls: Whether to enable PatchToolCallsProcessor that
+        patch_tool_calls: Whether to enable PatchToolCallsCapability that
             fixes orphaned tool calls in message history. Useful when
             resuming interrupted conversations. Defaults to True.
         include_checkpoints: Whether to enable conversation checkpointing.

@@ -13,11 +13,20 @@ import re
 import uuid
 from typing import Any
 
+from pydantic import BaseModel
 from pydantic_ai import RunContext
 from pydantic_ai.toolsets.function import FunctionToolset
 
 # Default plans directory (relative to backend root)
 DEFAULT_PLANS_DIR = "/plans"
+
+
+class PlanOption(BaseModel):
+    """An answer option offered by the `ask_user` tool."""
+
+    label: str
+    description: str = ""
+    recommended: bool = False
 
 
 def _slugify_title(title: str) -> str:
@@ -182,26 +191,20 @@ def create_plan_toolset(
     async def ask_user(  # pragma: no cover
         ctx: RunContext[Any],
         question: str,
-        options: list[dict[str, str]],
+        options: list[PlanOption],
     ) -> str:
         """Ask the user a question with predefined answer options.
 
         Args:
             question: The question to ask. Be specific and concise.
-            options: REQUIRED list of 2-4 answer options. Each option MUST have:
-                - 'label': Short option text (1-5 words)
-                - 'description': What this option means or implies
-                - 'recommended': Set to 'true' to highlight as recommended (optional)
+            options: REQUIRED list of 2-4 answer options.
         """
         callback = getattr(ctx.deps, "ask_user", None)
         if callback is None:
-            # Non-interactive mode: auto-select recommended or first option
-            recommended = next(
-                (o for o in options if o.get("recommended", "").lower() == "true"),
-                None,
-            )
-            choice = recommended or (options[0] if options else {"label": "N/A"})
-            return f"[Auto-selected: {choice['label']}]"
+            recommended = next((o for o in options if o.recommended), None)
+            choice = recommended or (options[0] if options else None)
+            label = choice.label if choice is not None else "N/A"
+            return f"[Auto-selected: {label}]"
 
         return str(await callback(question, options))
 

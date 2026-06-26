@@ -223,6 +223,7 @@ from pydantic_deep.toolsets.memory import (
     get_memory_path,
     load_memory,
 )
+from pydantic_deep.toolsets.plan import PlanOption
 from pydantic_deep.toolsets.skills import (
     BackendSkillResource,
     BackendSkillScript,
@@ -250,6 +251,7 @@ from pydantic_deep.toolsets.teams import (
     SharedTodoList,
     TeamMember,
     TeamMemberHandle,
+    TeamMemberSpec,
     TeamMessage,
     TeamMessageBus,
     create_team_toolset,
@@ -452,9 +454,11 @@ __all__ = [
     "SharedTodoList",
     "TeamMember",
     "TeamMemberHandle",
+    "TeamMemberSpec",
     "TeamMessage",
     "TeamMessageBus",
     "create_team_toolset",
+    "PlanOption",
     # Output styles
     "OutputStyle",
     "BUILTIN_STYLES",

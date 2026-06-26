@@ -71,7 +71,6 @@ def _coerce_specs(raw: list[dict[str, Any]]) -> list[BranchSpec]:
             steer=item["steer"],
             model=item.get("model"),
             budget_usd=item.get("budget_usd"),
-            extra_instructions=item.get("extra_instructions"),
         )
         for item in raw
     ]
@@ -126,8 +125,7 @@ def create_fork_toolset(  # noqa: C901
 
         Args:
             specs: List of branch specs; each item needs at least `label`
-                and `steer` keys. Optional: `model`, `budget_usd`,
-                `extra_instructions`.
+                and `steer` keys. Optional: `model`, `budget_usd`.
             isolation: Optional per-branch isolation overrides
                 (see :class:`BranchIsolation`).
             strategy: Optional merge strategy (defaults to `{"kind": "auto_with_fallback"}`).

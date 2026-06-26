@@ -16,9 +16,22 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from pydantic import BaseModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_backends import BackendProtocol, StateBackend
+
+DEFAULT_TEAM_MEMBER_MODEL = "anthropic:claude-sonnet-4-6"
+
+
+class TeamMemberSpec(BaseModel):
+    """A team member supplied to the `spawn_team` tool."""
+
+    name: str
+    role: str = "worker"
+    description: str = ""
+    instructions: str = ""
+    model: str = DEFAULT_TEAM_MEMBER_MODEL
 
 
 @dataclass
@@ -221,7 +234,7 @@ class TeamMember:
     role: str
     description: str
     instructions: str
-    model: str = "anthropic:claude-sonnet-4-6"
+    model: str = DEFAULT_TEAM_MEMBER_MODEL
     toolsets: list[Any] = field(default_factory=list)
 
 
@@ -404,7 +417,7 @@ def create_team_toolset(  # noqa: C901
     async def spawn_team(
         ctx: RunContext[Any],
         team_name: str,
-        members: list[dict[str, str]],
+        members: list[TeamMemberSpec],
     ) -> str:
         """Create and start an agent team."""
         if _team[0] is not None:
@@ -412,11 +425,11 @@ def create_team_toolset(  # noqa: C901
 
         team_members = [
             TeamMember(
-                name=m["name"],
-                role=m.get("role", "worker"),
-                description=m.get("description", ""),
-                instructions=m.get("instructions", ""),
-                model=m.get("model", "anthropic:claude-sonnet-4-6"),
+                name=m.name,
+                role=m.role,
+                description=m.description,
+                instructions=m.instructions,
+                model=m.model,
             )
             for m in members
         ]
