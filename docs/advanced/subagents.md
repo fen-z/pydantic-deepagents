@@ -1,6 +1,10 @@
 # Subagents
 
-Subagents allow the main agent to delegate specialized tasks to focused, context-isolated agents.
+A long task can drown a single agent's context in noise: half-finished plans,
+stale tool output, several threads of reasoning at once. **Sub-agents** are the
+fix — the main agent hands a focused job to a fresh, isolated specialist, gets
+back a clean result, and keeps its own context tidy. Think of it as delegating
+to a teammate who reports back, not one who narrates every step.
 
 ## Why Subagents?
 

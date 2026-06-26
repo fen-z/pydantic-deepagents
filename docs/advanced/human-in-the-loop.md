@@ -1,6 +1,16 @@
 # Human-in-the-Loop
 
-pydantic-deep supports requiring human approval for sensitive tool calls through the `interrupt_on` parameter. When a deferred tool is called, the agent pauses and returns a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] object instead of a final answer. You review the pending calls, build an approvals dict, and resume the agent with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults].
+Some actions you don't want an agent doing unsupervised — deleting files,
+running shell commands, spending money. **Human-in-the-loop** puts you back in
+the driver's seat for exactly those: the agent pauses before the risky call and
+waits for your yes/no.
+
+Mechanically, you mark sensitive tools with `interrupt_on`. When one is called,
+the agent doesn't return a final answer — it returns a
+[`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]. You review the
+pending calls, build an approvals dict, and resume with
+[`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. That round-trip
+is the whole pattern.
 
 ## Configuration
 

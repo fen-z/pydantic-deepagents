@@ -1,6 +1,10 @@
 # Structured Output
 
-pydantic-deep supports structured output through Pydantic models, allowing you to get type-safe responses from your agents.
+Most of the time an agent replies with free-form text. But when you need to *use*
+the answer in code — store it, branch on it, hand it to another function — a
+string is awkward and a parsing step is fragile. Point `output_type` at a
+Pydantic model instead, and the agent hands you back a validated instance of
+exactly that type. No prompt-wrangling, no `json.loads`, no guessing.
 
 ## Basic Usage
 
