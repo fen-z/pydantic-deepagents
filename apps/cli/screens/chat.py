@@ -42,7 +42,6 @@ from apps.cli.messages import (
     AgentError,
     AgentRunStarted,
     AgentTextComplete,
-    AgentToken,
     ApprovalRequested,
     CommandSelected,
     CompressionComplete,
@@ -51,8 +50,6 @@ from apps.cli.messages import (
     CostUpdated,
     FileSelected,
     TodosUpdated,
-    ToolCallCompleted,
-    ToolCallStarted,
     UserSubmitted,
 )
 from apps.cli.modals.approval import ApprovalModal
@@ -1532,33 +1529,11 @@ class ChatScreen(Screen):
         msg_list = self.query_one(MessageList)
         msg_list.begin_assistant_message()
 
-    def on_agent_token(self, event: AgentToken) -> None:
-        msg_list = self.query_one(MessageList)
-        if msg_list.current_assistant:
-            msg_list.current_assistant.append_text(event.text)
-            # Auto-scroll (debounced - Textual coalesces scroll_end calls)
-            msg_list.scroll_end(animate=False)
-        # Track for /copy
-        self.app.last_response = self.app.last_response + event.text
-
     def on_agent_text_complete(self, _event: AgentTextComplete) -> None:
         msg_list = self.query_one(MessageList)
         if msg_list.current_assistant:
             msg_list.current_assistant.finalize_text()
             msg_list.scroll_end(animate=False)
-
-    def on_tool_call_started(self, event: ToolCallStarted) -> None:
-        msg_list = self.query_one(MessageList)
-        if msg_list.current_assistant:
-            msg_list.current_assistant.add_tool_call(event.tool_name, event.args, event.call_id)
-            msg_list.scroll_end(animate=False)
-
-    def on_tool_call_completed(self, event: ToolCallCompleted) -> None:
-        msg_list = self.query_one(MessageList)
-        if msg_list.current_assistant:
-            msg_list.current_assistant.complete_tool_call(
-                event.call_id, event.result, event.elapsed, event.error
-            )
 
     def on_agent_complete(self, _event: AgentComplete) -> None:
         header = self.query_one(DeepHeader)

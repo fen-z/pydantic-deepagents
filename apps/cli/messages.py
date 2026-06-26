@@ -14,14 +14,6 @@ from textual.message import Message
 # Streaming messages
 
 
-class AgentToken(Message):
-    """A streaming text delta from the model."""
-
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self.text = text
-
-
 class AgentTextComplete(Message):
     """The model finished producing text for the current turn."""
 
@@ -36,45 +28,6 @@ class AgentThinking(Message):
     def __init__(self, status: str) -> None:
         super().__init__()
         self.status = status
-
-
-# Tool call messages
-
-
-class ToolCallStarted(Message):
-    """A tool call has started."""
-
-    def __init__(
-        self,
-        tool_name: str,
-        args: dict[str, Any],
-        call_id: str,
-    ) -> None:
-        super().__init__()
-        self.tool_name = tool_name
-        self.args = args
-        self.call_id = call_id
-
-
-class ToolCallCompleted(Message):
-    """A tool call has completed (success or error)."""
-
-    def __init__(
-        self,
-        tool_name: str,
-        args: dict[str, Any],
-        result: str,
-        elapsed: float,
-        error: bool,
-        call_id: str,
-    ) -> None:
-        super().__init__()
-        self.tool_name = tool_name
-        self.args = args
-        self.result = result
-        self.elapsed = elapsed
-        self.error = error
-        self.call_id = call_id
 
 
 # Approval messages
