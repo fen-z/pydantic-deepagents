@@ -189,15 +189,17 @@ class TestTUIWidgets:
             # welcome + user "!echo hello" + assistant result = 3+
             assert len(msg_list.children) >= 3
 
-    async def test_header_state(self, app):
+    async def test_no_top_header(self, app):
+        # The top header was removed; the wordmark lives in the hero and the
+        # model/branch in the footer + status bar.
         async with app.run_test(size=(120, 35)) as pilot:
             await pilot.pause()
             await pilot.pause()
-            from apps.cli.widgets.header import DeepHeader
+            from apps.cli.widgets.status_bar import StatusBar
 
-            header = app.screen.query_one(DeepHeader)
-            assert header.version == "0.3.3"
-            assert header.model_name == "test"
+            assert len(app.screen.query("DeepHeader")) == 0
+            status = app.screen.query_one(StatusBar)
+            assert status.model_name == "test"
 
     async def test_status_bar(self, app):
         async with app.run_test(size=(120, 35)) as pilot:
