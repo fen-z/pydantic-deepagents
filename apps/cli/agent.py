@@ -160,7 +160,8 @@ def create_cli_agent(  # noqa: C901
     Configuration precedence: explicit arguments > config file > defaults.
 
     Args:
-        model: Model to use. Falls back to config, then `"anthropic:claude-sonnet-4-6"`.
+        model: Model to use. Falls back to the config file's `model`, which
+            itself defaults to `pydantic_deep.models.DEFAULT_MODEL`.
         working_dir: Filesystem root directory. Defaults to cwd.
         shell_allow_list: Allowed shell command prefixes. None = all allowed.
         on_cost_update: Callback for cost updates.
