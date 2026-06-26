@@ -112,6 +112,12 @@ pydantic-deep = "apps.cli.main:app"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# LOCAL DEV ONLY — do NOT commit. Points pydantic-ai-backend at the local
+# editable checkout (feat/background-processes branch) for testing background
+# process tools without publishing a new release. Remove to fall back to PyPI.
+[tool.uv.sources]
+pydantic-ai-backend = { path = "/Users/kacperwlodarczyk/PycharmProjects/pydantic-ai-backend", editable = true }
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_deep", "apps"]
