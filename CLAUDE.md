@@ -21,7 +21,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Repository Layout
 
-- `pydantic_deep/` — Core library (agent, deps, toolsets, capabilities, processors)
+- `pydantic_deep/` — Core library (agent, deps, models, instructions, types)
+- `pydantic_deep/features/<name>/` — One vertical-slice package per feature
+  (`capability.py` + `toolset.py` + `service.py`/`types.py`). Organize by
+  feature, not by kind. The old `toolsets/`, `capabilities/`, and `processors/`
+  paths now hold deprecation shims that re-export from `features/`.
 - `apps/cli/` — CLI + TUI application (Textual-based terminal AI assistant)
 - `apps/deepresearch/` — Full-featured research reference app
 - `tests/` — Unit tests
@@ -73,7 +77,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `Skill`, `SkillDirectory`, `SkillFrontmatter`
 - `ResponseFormat`: Alias for structured output specification
 
-**Checkpointing (`pydantic_deep/toolsets/checkpointing.py`)**
+**Checkpointing (`pydantic_deep/features/checkpointing/`)**
 - `Checkpoint`: Immutable snapshot of conversation state (id, label, turn, messages, metadata)
 - `CheckpointStore`: Protocol for storage backends (save, get, list_all, remove, etc.)
 - `InMemoryCheckpointStore`: Default in-memory store
@@ -83,7 +87,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `RewindRequested`: Exception for app-level rewind (propagates out of agent.run())
 - `fork_from_checkpoint()`: Utility for session forking
 
-**Agent Teams (`pydantic_deep/toolsets/teams.py`)**
+**Agent Teams (`pydantic_deep/features/teams/`)**
 - `SharedTodoItem`: Task with assignment, dependencies, and status tracking
 - `SharedTodoList`: Asyncio-safe shared TODO list with claiming and dependency blocking
 - `TeamMessage`: Message between team members
@@ -101,7 +105,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `load_style_from_file()`: Load a single style with frontmatter parsing
 - `format_style_prompt()`: Format for system prompt injection
 
-**Hooks (`pydantic_deep/capabilities/hooks.py`)**
+**Hooks (`pydantic_deep/features/hooks/capability.py`)**
 - `HookEvent`: Enum (PRE_TOOL_USE, POST_TOOL_USE, POST_TOOL_USE_FAILURE)
 - `Hook`: Definition — event, command/handler, matcher regex, timeout, background
 - `HookInput`: Data passed to hooks (event, tool_name, tool_input, tool_result, tool_error)
@@ -118,14 +122,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `PlanCapability`: Planning mode with ask_user + save_plan tools
 - All extend pydantic-ai's `AbstractCapability`
 
-**Persistent Memory (`pydantic_deep/toolsets/memory.py`)**
+**Persistent Memory (`pydantic_deep/features/memory/`)**
 - `MemoryFile`: Loaded memory (agent_name, path, content)
 - `AgentMemoryToolset`: FunctionToolset with read_memory, write_memory, update_memory
 - `get_instructions()`: Injects memory into system prompt (first N lines)
 - `load_memory()`, `format_memory_prompt()`, `get_memory_path()`
 - Default path: `{memory_dir}/{agent_name}/MEMORY.md`
 
-**Context Files (`pydantic_deep/toolsets/context.py`)**
+**Context Files (`pydantic_deep/features/context/`)**
 - `ContextFile`: Loaded context file (name, path, content)
 - `ContextToolset`: FunctionToolset that injects context files via get_instructions()
 - `discover_context_files()`: Auto-discover DEEP.md, AGENTS.md, CLAUDE.md, SOUL.md
@@ -134,14 +138,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `DEFAULT_CONTEXT_FILENAMES`: [DEEP.md, AGENTS.md, CLAUDE.md, SOUL.md]
 - `SUBAGENT_CONTEXT_ALLOWLIST`: {AGENTS.md, CLAUDE.md} — subagents don't see SOUL.md/.cursorrules/etc.
 
-**Eviction (`pydantic_deep/processors/eviction.py`)**
+**Eviction (`pydantic_deep/features/eviction/capability.py`)**
 - `EvictionCapability`: Capability — intercepts large tool outputs via `after_tool_execute` before they enter history
 - `create_content_preview()`: Head/tail preview with truncation marker
 - Default threshold: 20,000 tokens (80,000 chars)
 - Uses runtime `ctx.deps.backend` for writing
 - Supports `on_eviction` callback for notification when content is evicted
 
-**Stuck Loop Detection (`pydantic_deep/capabilities/stuck_loop.py`)**
+**Stuck Loop Detection (`pydantic_deep/features/stuck_loop/capability.py`)**
 - `StuckLoopDetection`: Capability — detects repetitive agent behavior via `after_tool_execute`
 - Three patterns: repeated identical calls, A-B-A-B alternating, no-op (same result)
 - `max_repeated`: Threshold (default 3), `action`: "warn" (ModelRetry) or "error" (StuckLoopError)
@@ -155,13 +159,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `BudgetExceededError`: Raised when cumulative cost exceeds `cost_budget_usd`
 - Pricing from `genai-prices` package
 
-**Patch Tool Calls (`pydantic_deep/processors/patch.py`)**
+**Patch Tool Calls (`pydantic_deep/features/patch/capability.py`)**
 - `PatchToolCallsCapability`: Capability — fixes orphaned tool calls via `before_model_request`
 - `patch_tool_calls_processor()`: Legacy function (backward compatibility)
 - Injects synthetic `ToolReturnPart` with "Tool call was cancelled." message
 - Used when resuming interrupted conversations (`patch_tool_calls=True`)
 
-**Plan Mode (`pydantic_deep/toolsets/plan/`)**
+**Plan Mode (`pydantic_deep/features/plan/`)**
 - `create_plan_toolset()`: Factory for ask_user + save_plan tools
 - Built-in 'planner' subagent registered when `include_plan=True`
 - `PLANNER_INSTRUCTIONS`, `PLANNER_DESCRIPTION`: Planner configuration
