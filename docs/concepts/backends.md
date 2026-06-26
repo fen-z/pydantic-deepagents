@@ -1,24 +1,36 @@
 # Backends
 
-Backends provide file storage for deep agents. pydantic-deep uses backends from [pydantic-ai-backend](https://vstorm-co.github.io/pydantic-ai-backend/).
+When your agent writes a file, where does it actually go? That's the backend's
+job. A **backend** is the storage layer behind every file tool — `read`,
+`write`, `edit`, `ls`, `grep`. Crucially, your agent code doesn't know or care
+which one you use: swap the backend and the same agent runs against memory, real
+disk, or an isolated Docker container.
 
-!!! info "Full Documentation"
-    For complete backend documentation, see **[pydantic-ai-backend docs](https://vstorm-co.github.io/pydantic-ai-backend/concepts/backends/)**.
+pydantic-deep uses the backends from [pydantic-ai-backend](https://vstorm-co.github.io/pydantic-ai-backend/).
 
-## Available Backends
+!!! info "Full reference"
+    This page covers the essentials. For every method and option, see the
+    **[pydantic-ai-backend docs](https://vstorm-co.github.io/pydantic-ai-backend/concepts/backends/)**.
 
-| Backend | Persistence | Execution | Use Case |
-|---------|-------------|-----------|----------|
-| `LocalBackend` | Persistent | Yes | CLI tools, local development |
-| `StateBackend` | Ephemeral | No | Testing, temporary files |
-| `DockerSandbox` | Ephemeral | Yes | Safe code execution |
-| `CompositeBackend` | Mixed | Depends | Route by path prefix |
+## Which backend?
 
-## Quick Examples
+Four cover almost everything:
 
-### LocalBackend
+| Backend | Persistence | Execution | Reach for it when… |
+|---------|-------------|-----------|--------------------|
+| `LocalBackend` | Persistent | Yes | building a CLI tool or working on real local files |
+| `StateBackend` | Ephemeral | No | testing, or anything that must leave no trace |
+| `DockerSandbox` | Ephemeral | Yes | running code you don't fully trust |
+| `CompositeBackend` | Mixed | Depends | different paths need different backends |
 
-For CLI tools and local development:
+!!! tip "Start with StateBackend"
+    When you're trying things out, `StateBackend()` keeps everything in memory —
+    no files on disk, nothing to clean up. Switch to `LocalBackend` once you want
+    the work to persist. Your agent code stays exactly the same.
+
+## The four, by example
+
+### LocalBackend — real files on disk
 
 ```python
 from pydantic_deep import create_deep_agent, DeepAgentDeps, LocalBackend
@@ -30,9 +42,7 @@ agent = create_deep_agent()
 result = await agent.run("Create a Python script", deps=deps)
 ```
 
-### StateBackend
-
-For testing (in-memory, no side effects):
+### StateBackend — in memory, zero side effects
 
 ```python
 from pydantic_deep import create_deep_agent, DeepAgentDeps, StateBackend
@@ -40,19 +50,16 @@ from pydantic_deep import create_deep_agent, DeepAgentDeps, StateBackend
 backend = StateBackend()
 deps = DeepAgentDeps(backend=backend)
 
-# Files stored in memory only
+# Files live in memory only — perfect for tests.
 backend.write("/src/app.py", "print('hello')")
 ```
 
-### DockerSandbox
-
-For safe code execution:
+### DockerSandbox — safe code execution
 
 ```python
 from pydantic_deep import create_deep_agent, DeepAgentDeps, DockerSandbox
 
 sandbox = DockerSandbox(runtime="python-datascience")
-
 try:
     deps = DeepAgentDeps(backend=sandbox)
     agent = create_deep_agent()
@@ -61,9 +68,15 @@ finally:
     sandbox.stop()
 ```
 
-### CompositeBackend
+!!! warning "Always stop the sandbox"
+    `DockerSandbox` holds a real container. Wrap it in `try/finally` (or an
+    `async with`) so the container is torn down even if the run raises.
 
-Route operations to different backends based on path prefix:
+### CompositeBackend — route by path
+
+Sometimes one backend isn't enough: you want source files on real disk, scratch
+space in memory, and untrusted code in a sandbox — all in the same run.
+`CompositeBackend` routes each path to the right place:
 
 ```python
 from pydantic_deep import CompositeBackend, StateBackend, LocalBackend, DockerSandbox
@@ -77,66 +90,48 @@ backend = CompositeBackend(
 )
 ```
 
-**Routing Logic:**
+The rules are simple:
 
-1. Paths are matched by prefix (longest match wins)
-2. Operations are forwarded to the matched backend
-3. Unmatched paths go to `default` backend
-
-**Example routing:**
+1. Paths match by prefix — the **longest** match wins.
+2. Operations forward to the matched backend.
+3. Anything unmatched falls through to `default`.
 
 ```python
 backend = CompositeBackend(
-    default=StateBackend(),  # For /tmp, /cache, etc.
+    default=StateBackend(),  # /tmp, /cache, …
     routes={
-        "/src/": LocalBackend(root_dir="./src"),       # Source files
-        "/data/": LocalBackend(root_dir="./data"),     # Data files
-        "/output/": StateBackend(),                     # Temporary output
+        "/src/": LocalBackend(root_dir="./src"),
+        "/data/": LocalBackend(root_dir="./data"),
+        "/output/": StateBackend(),
     },
 )
 
-# Route: /src/app.py → LocalBackend("./src")
-backend.write("/src/app.py", "print('hello')")
-
-# Route: /data/input.csv → LocalBackend("./data")
-content = backend.read("/data/input.csv")
-
-# Route: /tmp/cache.json → default StateBackend
-backend.write("/tmp/cache.json", "{}")
-
-# Route: /output/result.txt → StateBackend (explicit route)
-backend.write("/output/result.txt", "done")
+backend.write("/src/app.py", "print('hello')")   # → LocalBackend("./src")
+content = backend.read("/data/input.csv")          # → LocalBackend("./data")
+backend.write("/tmp/cache.json", "{}")             # → default StateBackend
+backend.write("/output/result.txt", "done")        # → StateBackend (explicit route)
 ```
 
-**Use cases:**
+Common shapes:
 
-| Use Case | Configuration |
-|----------|---------------|
+| Goal | Configuration |
+|------|---------------|
 | Read-only source + writable output | `routes={"/src/": LocalBackend()}`, `default=StateBackend()` |
-| Multiple project directories | Multiple LocalBackend routes |
-| Safe execution with local files | `routes={"/code/": DockerSandbox()}`, `default=LocalBackend()` |
+| Multiple project directories | several `LocalBackend` routes |
+| Safe execution beside local files | `routes={"/code/": DockerSandbox()}`, `default=LocalBackend()` |
 | Testing with fixtures | `routes={"/fixtures/": LocalBackend("./test/fixtures")}` |
 
-**Path transformation:**
+!!! note "Routes strip their prefix"
+    A route forwards the path *without* its prefix. So with
+    `routes={"/project/": LocalBackend(root_dir="/home/user/myproject")}`, a write
+    to `/project/src/main.py` reaches `LocalBackend` as `/src/main.py` — landing at
+    `/home/user/myproject/src/main.py`.
 
-Routes strip the prefix when forwarding to the target backend:
+## Skills can live in a backend too
 
-```python
-backend = CompositeBackend(
-    routes={"/project/": LocalBackend(root_dir="/home/user/myproject")}
-)
-
-# Write to /project/src/main.py
-# → LocalBackend receives path: /src/main.py
-# → Actual file: /home/user/myproject/src/main.py
-backend.write("/project/src/main.py", "code")
-```
-
-## Backend-Aware Skills
-
-Backends also integrate with the [skills system](skills.md#skills-with-backends).
-Use `BackendSkillsDirectory` to discover skills stored inside any backend
-(StateBackend, DockerSandbox, etc.) instead of the local filesystem:
+Backends also back the [skills system](skills.md#skills-with-backends). Point
+`BackendSkillsDirectory` at any backend to discover skills stored *inside* it
+(a `StateBackend`, a `DockerSandbox`, …) rather than on the local filesystem:
 
 ```python
 from pydantic_deep.toolsets.skills.backend import BackendSkillsDirectory
@@ -147,10 +142,17 @@ agent = create_deep_agent(
 )
 ```
 
-See [Skills with Backends](skills.md#skills-with-backends) for full examples.
+See [Skills with Backends](skills.md#skills-with-backends) for the full story.
 
-## Learn More
+## Recap
 
-- **[Backends Documentation](https://vstorm-co.github.io/pydantic-ai-backend/concepts/backends/)** - Full backend reference
-- **[Docker Sandbox](https://vstorm-co.github.io/pydantic-ai-backend/concepts/docker/)** - Docker execution environments
-- **[Console Toolset](https://vstorm-co.github.io/pydantic-ai-backend/concepts/console-toolset/)** - File operation tools
+- A backend is *where files live* — and it's decoupled from your agent code.
+- `StateBackend` for tests, `LocalBackend` for real work, `DockerSandbox` for
+  untrusted code, `CompositeBackend` to mix them by path.
+- Swapping backends never changes the agent — only `DeepAgentDeps(backend=…)`.
+
+## Learn more
+
+- **[Backends documentation](https://vstorm-co.github.io/pydantic-ai-backend/concepts/backends/)** — the full reference
+- **[Docker Sandbox](https://vstorm-co.github.io/pydantic-ai-backend/concepts/docker/)** — execution environments
+- **[Console toolset](https://vstorm-co.github.io/pydantic-ai-backend/concepts/console-toolset/)** — the file-operation tools
