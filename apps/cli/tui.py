@@ -30,6 +30,12 @@ def run_tui(
     anyway without an agent so the user can configure via /provider or /settings.
     """
 
+    # Stop fastmcp/mcp/httpx from logging to the terminal — under the TUI their
+    # Rich/console handlers paint over the live screen (e.g. MCP `tools/list`).
+    from apps.cli.debug_log import quiet_console_logging
+
+    quiet_console_logging()
+
     # Load saved API keys from keys.toml → os.environ
     load_keys()
 

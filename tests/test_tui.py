@@ -46,6 +46,20 @@ class TestTUIWidgets:
             band._advance()
             assert band._phase > phase_before
 
+    def test_quiet_console_logging_strips_terminal_handlers(self):
+        """fastmcp/mcp must not log to the terminal under the TUI (it paints over
+        the live screen, e.g. MCP `tools/list`)."""
+        import logging
+
+        from apps.cli.debug_log import quiet_console_logging
+
+        lg = logging.getLogger("fastmcp")
+        lg.handlers = [logging.StreamHandler()]  # simulate a console handler
+        lg.propagate = True
+        quiet_console_logging()
+        assert all(isinstance(h, logging.NullHandler) for h in lg.handlers)
+        assert lg.propagate is False
+
     async def test_brand_theme_is_active_by_default(self, app):
         async with app.run_test(size=(120, 35)) as pilot:
             await pilot.pause()

@@ -170,8 +170,8 @@ async def _stream_branch_via_iter(  # noqa: C901
                                 a.add_tool_call(tool_name, args, call_id)
                                 msg_list.scroll_end(animate=False)
                             elif isinstance(event, FunctionToolResultEvent):
-                                call_id = getattr(event.result, "tool_call_id", "unknown")
-                                raw = str(event.result.content)
+                                call_id = getattr(event.part, "tool_call_id", "unknown")
+                                raw = str(getattr(event.part, "content", event.content))
                                 from apps.cli.text_heuristics import (
                                     looks_like_error as _looks_err,
                                 )
@@ -1028,9 +1028,9 @@ class ChatScreen(Screen):
                                             app.push_screen(_overlay)
 
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    tool_name = getattr(event.result, "tool_name", "unknown")
-                                    call_id = getattr(event.result, "tool_call_id", tool_name)
-                                    raw = str(event.result.content)
+                                    tool_name = getattr(event.part, "tool_name", "unknown")
+                                    call_id = getattr(event.part, "tool_call_id", tool_name)
+                                    raw = str(getattr(event.part, "content", event.content))
                                     elapsed = 0.0
                                     args = {}
                                     if call_id in pending:
@@ -1206,13 +1206,9 @@ class ChatScreen(Screen):
                                                 )
                                                 msg_list.scroll_end(animate=False)
                                         elif isinstance(event, FunctionToolResultEvent):
-                                            tool_name = getattr(
-                                                event.result, "tool_name", "unknown"
-                                            )
-                                            call_id = getattr(
-                                                event.result, "tool_call_id", tool_name
-                                            )
-                                            raw = str(event.result.content)
+                                            tool_name = getattr(event.part, "tool_name", "unknown")
+                                            call_id = getattr(event.part, "tool_call_id", tool_name)
+                                            raw = str(getattr(event.part, "content", event.content))
                                             # Same error detection as the main loop:
                                             # an approved command that fails must show
                                             # as an error (✗), not a green success.
