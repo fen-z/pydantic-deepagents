@@ -78,6 +78,7 @@ from pydantic_deep.features.skills import Skill, SkillsToolset
 from pydantic_deep.features.skills.backend import BackendSkillsDirectory
 from pydantic_deep.features.stuck_loop import StuckLoopDetection
 from pydantic_deep.features.teams import create_team_toolset
+from pydantic_deep.features.tool_search import ToolSearch, defer_situational_toolsets
 from pydantic_deep.instructions import build_instruction_providers, render_instructions
 from pydantic_deep.models import (
     DEFAULT_IMPROVE_MODEL,
@@ -514,6 +515,7 @@ def create_deep_agent(
     plans_dir: str | None = None,
     message_queue: MessageQueue | None = None,
     forking: bool | LiveForkCapability = False,
+    tool_search: bool = False,
     instrument: bool | None = None,
     **agent_kwargs: Any,
 ) -> Agent[DeepAgentDeps, str]: ...
@@ -592,6 +594,7 @@ def create_deep_agent(
     plans_dir: str | None = None,
     message_queue: MessageQueue | None = None,
     forking: bool | LiveForkCapability = False,
+    tool_search: bool = False,
     instrument: bool | None = None,
     **agent_kwargs: Any,
 ) -> Agent[DeepAgentDeps, OutputDataT]: ...
@@ -668,6 +671,7 @@ def create_deep_agent(  # noqa: C901
     plans_dir: str | None = None,
     message_queue: MessageQueue | None = None,
     forking: bool | LiveForkCapability = False,
+    tool_search: bool = False,
     instrument: bool | None = None,
     **agent_kwargs: Any,
 ) -> Agent[DeepAgentDeps, OutputDataT] | Agent[DeepAgentDeps, str]:
@@ -1366,6 +1370,15 @@ def create_deep_agent(  # noqa: C901
     # Add user-provided capabilities
     if capabilities:
         all_capabilities.extend(capabilities)
+
+    # Tool search: defer the situational tool surface (subagents, skills,
+    # memory, MCP, …) so only the core read/edit/run/track loop is loaded
+    # upfront. The model discovers the rest on demand, which cuts per-request
+    # input tokens and sharpens tool selection. Opt-in (off by default).
+    if tool_search:
+        all_toolsets = defer_situational_toolsets(all_toolsets)
+        agent_create_kwargs["toolsets"] = all_toolsets
+        all_capabilities.append(ToolSearch())
 
     # Add user-provided tools
     if tools:

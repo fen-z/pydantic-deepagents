@@ -81,6 +81,7 @@ class DeepAgentSpec(BaseModel):
     stuck_loop_detection: bool = True
     periodic_reminder: bool | None = None
     forking: bool = False
+    tool_search: bool = False
     web_search: bool = True
     web_fetch: bool = True
     thinking: bool | str = "high"

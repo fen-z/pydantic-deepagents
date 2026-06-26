@@ -142,6 +142,12 @@ class CliConfig:
     """Enable document parsing via LiteParse.
 
     Requires `pydantic-deep[liteparse]` and Node.js >= 18."""
+    tool_search: bool = True
+    """Defer the situational tool surface and discover tools on demand.
+
+    Keeps the core read/edit/run/track loop always-loaded and hides the rest
+    (subagents, skills, memory, MCP, …) until the model searches for them,
+    cutting per-request input tokens. Default `True` in the CLI."""
     periodic_reminder: bool = True
     """Inject a periodic reminder of the original task every N turns."""
     reminder_mode: Literal["off", "first", "context", "llm"] = "llm"

@@ -456,6 +456,8 @@ def create_cli_agent(  # noqa: C901
         include_teams=(include_teams if include_teams is not None else config.include_teams),
         include_liteparse=effective_liteparse,
         include_improve=True,
+        # Defer the situational tool surface so only the core loop loads upfront.
+        tool_search=(config.tool_search if not lean else False),
         forking=LiveForkCapability(test_command=_detect_fork_test_command(effective_backend)),
         # Web tools — explicit params override config
         web_search=(

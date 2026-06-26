@@ -29,6 +29,7 @@ _TOGGLES: list[tuple[str, str]] = [
     ("include_todo", "Todos"),
     ("web_search", "Web search"),
     ("web_fetch", "Web fetch"),
+    ("tool_search", "Tool search (defer tools)"),
     ("include_browser", "Browser"),
     ("include_teams", "Teams"),
     ("context_discovery", "Context discovery"),
