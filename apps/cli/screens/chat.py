@@ -1565,10 +1565,15 @@ class ChatScreen(Screen):
     }
 
     def _expand_file_refs(self, text: str) -> str:
-        """Expand @file references in the prompt with file contents.
+        """Resolve @file references in the prompt to plain paths.
 
-        Image files (``@shot.png`` etc.) are attached as multimodal content
-        for the next prompt instead of being inlined as text.
+        A text/code file reference (``@src/main.py``) is turned into the bare
+        path (backticked) so the *agent* decides how to read it — whole via
+        read_file, a slice with offset/limit, or grep — instead of us dumping
+        the entire file into the prompt (which wastes context and removes that
+        choice). Image files (``@shot.png``) are still attached as multimodal
+        content, since the model reads those directly rather than via tools.
+        Unknown paths are left untouched (e.g. ``@someone`` mentions).
         """
 
         working_dir = Path(self.app.working_dir)
@@ -1576,23 +1581,18 @@ class ChatScreen(Screen):
         def replace_ref(match: re.Match[str]) -> str:
             filepath = match.group(1)
             full_path = working_dir / filepath
+            if not full_path.is_file():
+                return match.group(0)  # not a real file — leave as typed
             ext = full_path.suffix.lower()
-            if ext in self._IMAGE_EXTS and full_path.is_file():
+            if ext in self._IMAGE_EXTS:
                 try:
                     data = full_path.read_bytes()
                     self._pending_images.append((data, self._IMAGE_EXTS[ext]))
                     return f"[image: {filepath}]"
                 except Exception:
                     return match.group(0)
-            try:
-                if full_path.is_file():
-                    content = full_path.read_text()
-                    if len(content) > 50_000:
-                        content = content[:50_000] + "\n... (truncated)"
-                    return f'\n\n<file path="{filepath}">\n{content}\n</file>\n'
-            except Exception:
-                pass
-            return match.group(0)  # Leave as-is if can't read
+            # Hand the agent the path, not the contents.
+            return f"`{filepath}`"
 
         return re.sub(r"@([\w./\-]+)", replace_ref, text)
 

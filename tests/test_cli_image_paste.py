@@ -50,9 +50,7 @@ def test_escape_markup_brackets() -> None:
     assert _escape_markup("[Image #1]") == r"\[Image #1]"
 
 
-async def test_clipboard_image_shows_chip(
-    app: DeepApp, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_clipboard_image_shows_chip(app: DeepApp, monkeypatch: pytest.MonkeyPatch) -> None:
     async with app.run_test(size=(120, 35)) as pilot:
         await pilot.pause()
         await pilot.pause()
@@ -195,7 +193,7 @@ async def test_at_reference_image_attaches_as_multimodal(
         assert screen._pending_images[0][1] == "image/png"
 
 
-async def test_at_reference_text_still_inlined(
+async def test_at_reference_text_passes_path_not_contents(
     app: DeepApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     f = tmp_path / "note.txt"
@@ -205,7 +203,9 @@ async def test_at_reference_text_still_inlined(
         screen = cast(ChatScreen, app.screen)
         monkeypatch.setattr(app, "working_dir", str(tmp_path), raising=False)
         expanded = screen._expand_file_refs("see @note.txt")
-        assert "hello world" in expanded
+        # The path is handed to the agent; its contents are NOT inlined.
+        assert "`note.txt`" in expanded
+        assert "hello world" not in expanded
         assert screen._pending_images == []
 
 

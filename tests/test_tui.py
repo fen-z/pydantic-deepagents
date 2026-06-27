@@ -412,23 +412,24 @@ class TestThemes:
 
 class TestFileRefs:
     async def test_expand_file_refs_existing(self, app):
-        """Test that @file refs expand for existing files."""
+        """An existing text file resolves to its path, not its contents — the
+        agent decides how to read it."""
         async with app.run_test(size=(120, 35)) as pilot:
             await pilot.pause()
             await pilot.pause()
+            import os
+
             from apps.cli.screens.chat import ChatScreen
 
             chat = app.screen
             assert isinstance(chat, ChatScreen)
-            # pyproject.toml should exist in the working dir
             result = chat._expand_file_refs("look at @pyproject.toml please")
-            # If pyproject.toml exists in cwd, it should be expanded
-            import os
-
             if os.path.isfile(os.path.join(app.working_dir, "pyproject.toml")):
-                assert '<file path="pyproject.toml">' in result
+                # Path is passed through (backticked); contents are NOT inlined.
+                assert "`pyproject.toml`" in result
+                assert "<file path=" not in result
+                assert "[project]" not in result  # no file body leaked in
             else:
-                # If not, it should be left as-is
                 assert "@pyproject.toml" in result
 
     async def test_expand_file_refs_nonexistent(self, app):
