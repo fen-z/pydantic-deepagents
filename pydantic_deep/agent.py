@@ -8,7 +8,7 @@ import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai import Agent, UsageLimits
 from pydantic_ai._agent_graph import HistoryProcessor
@@ -40,6 +40,11 @@ from subagents_pydantic_ai import (
     UsageLimitsFactory,
     create_subagent_toolset,
 )
+
+# `overload` from typing_extensions (not typing): its registry is readable via
+# get_overloads() on every Python version, whereas typing.overload only
+# registers overloads on 3.11+. The DeepAgentSpec drift-guard test relies on it.
+from typing_extensions import overload
 
 from pydantic_deep.deps import DeepAgentDeps
 from pydantic_deep.features.checkpointing import (
