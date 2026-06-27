@@ -209,6 +209,55 @@ async def test_at_reference_text_passes_path_not_contents(
         assert screen._pending_images == []
 
 
+async def test_at_reference_image_with_spaces_quoted(
+    app: DeepApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A quoted @-ref with spaces (e.g. a screenshot) attaches as an image."""
+    img = tmp_path / "Screenshot 2026-06-27 at 10.34.39.png"
+    img.write_bytes(_PNG)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        screen = cast(ChatScreen, app.screen)
+        monkeypatch.setattr(app, "working_dir", str(tmp_path), raising=False)
+        expanded = screen._expand_file_refs(
+            'what you see here @"Screenshot 2026-06-27 at 10.34.39.png"'
+        )
+        assert "[image: Screenshot 2026-06-27 at 10.34.39.png]" in expanded
+        assert len(screen._pending_images) == 1
+        assert screen._pending_images[0][1] == "image/png"
+
+
+async def test_at_reference_text_with_spaces_quoted(
+    app: DeepApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    f = tmp_path / "my notes.md"
+    f.write_text("# notes")
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        screen = cast(ChatScreen, app.screen)
+        monkeypatch.setattr(app, "working_dir", str(tmp_path), raising=False)
+        expanded = screen._expand_file_refs('read @"my notes.md" now')
+        assert "`my notes.md`" in expanded
+        assert "# notes" not in expanded
+
+
+async def test_at_reference_unquoted_still_works(
+    app: DeepApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bare (unquoted) refs without spaces keep working alongside quoted ones."""
+    img = tmp_path / "a.png"
+    img.write_bytes(_PNG)
+    (tmp_path / "x.txt").write_text("data")
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        screen = cast(ChatScreen, app.screen)
+        monkeypatch.setattr(app, "working_dir", str(tmp_path), raising=False)
+        expanded = screen._expand_file_refs("see @a.png and @x.txt")
+        assert "[image: a.png]" in expanded
+        assert "`x.txt`" in expanded
+        assert len(screen._pending_images) == 1
+
+
 async def test_submit_without_agent_keeps_images(
     app: DeepApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:

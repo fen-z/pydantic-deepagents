@@ -835,7 +835,9 @@ class ChatScreen(Screen):
             with contextlib.suppress(Exception):
                 prompt = self.query_one(InputArea).query_one("PromptInput")
                 sep = "" if not prompt.value or prompt.value.endswith(" ") else " "
-                prompt.value = f"{prompt.value}{sep}@{path} "
+                # Quote paths with spaces so the @-ref round-trips through expansion.
+                ref = f'"{path}"' if " " in str(path) else str(path)
+                prompt.value = f"{prompt.value}{sep}@{ref} "
                 prompt.cursor_position = len(prompt.value)
         with contextlib.suppress(Exception):
             self.query_one(InputArea).focus_input()
@@ -870,7 +872,10 @@ class ChatScreen(Screen):
                 input_area = self.query_one(InputArea)
                 prompt = input_area.query("PromptInput")
                 if prompt:
-                    prompt.first().value += f"@{result} "
+                    # Quote paths with spaces so the @-ref round-trips intact
+                    # (e.g. "@\"Screenshot 2026 ....png\"").
+                    ref = f'"{result}"' if " " in result else result
+                    prompt.first().value += f"@{ref} "
 
         self.app.push_screen(FilePickerModal(working_dir), _handle_result)
 
@@ -1579,7 +1584,8 @@ class ChatScreen(Screen):
         working_dir = Path(self.app.working_dir)
 
         def replace_ref(match: re.Match[str]) -> str:
-            filepath = match.group(1)
+            # Group 1 = a quoted path `@"with spaces.png"`, group 2 = a bare path.
+            filepath = match.group(1) if match.group(1) is not None else match.group(2)
             full_path = working_dir / filepath
             if not full_path.is_file():
                 return match.group(0)  # not a real file — leave as typed
@@ -1594,7 +1600,8 @@ class ChatScreen(Screen):
             # Hand the agent the path, not the contents.
             return f"`{filepath}`"
 
-        return re.sub(r"@([\w./\-]+)", replace_ref, text)
+        # Match a quoted `@"path with spaces"` first, then a bare `@path`.
+        return re.sub(r'@"([^"]+)"|@([\w./\-]+)', replace_ref, text)
 
     # Agent event handling
 
