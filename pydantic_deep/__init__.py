@@ -206,6 +206,12 @@ from pydantic_deep.features.memory import (
     get_memory_path,
     load_memory,
 )
+from pydantic_deep.features.monitoring import (
+    MonitorEvent,
+    MonitorInfo,
+    MonitorManager,
+    create_monitor_toolset,
+)
 from pydantic_deep.features.patch import (
     CANCELLED_MESSAGE,
     PatchToolCallsCapability,
@@ -460,6 +466,10 @@ __all__ = [
     "TeamMessage",
     "TeamMessageBus",
     "create_team_toolset",
+    "MonitorManager",
+    "MonitorEvent",
+    "MonitorInfo",
+    "create_monitor_toolset",
     "PlanOption",
     # Output styles
     "OutputStyle",

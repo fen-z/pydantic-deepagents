@@ -76,6 +76,7 @@ class DeepAgentSpec(BaseModel):
     include_memory: bool = True
     include_checkpoints: bool = False
     include_teams: bool = False
+    include_monitoring: bool = True
     include_improve: bool = False
     include_liteparse: bool = False
     stuck_loop_detection: bool = True

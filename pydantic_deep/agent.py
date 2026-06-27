@@ -64,6 +64,7 @@ from pydantic_deep.features.memory import (
     AgentMemoryToolset,
 )
 from pydantic_deep.features.message_queue import MessageQueueCapability
+from pydantic_deep.features.monitoring import create_monitor_toolset
 from pydantic_deep.features.patch import PatchToolCallsCapability
 from pydantic_deep.features.periodic_reminder import (
     PeriodicReminderCapability,
@@ -304,6 +305,7 @@ def _make_default_deep_agent_factory(
             include_skills=False,
             include_plan=False,
             include_teams=False,
+            include_monitoring=False,
             include_builtin_subagents=False,
             context_manager=False,
             cost_tracking=False,
@@ -499,6 +501,7 @@ def create_deep_agent(
     max_checkpoints: int = 20,
     checkpoint_store: CheckpointStore | None = None,
     include_teams: bool = False,
+    include_monitoring: bool = True,
     include_improve: bool = False,
     include_liteparse: bool = False,
     stuck_loop_detection: bool = True,
@@ -578,6 +581,7 @@ def create_deep_agent(
     max_checkpoints: int = 20,
     checkpoint_store: CheckpointStore | None = None,
     include_teams: bool = False,
+    include_monitoring: bool = True,
     include_improve: bool = False,
     include_liteparse: bool = False,
     stuck_loop_detection: bool = True,
@@ -655,6 +659,7 @@ def create_deep_agent(  # noqa: C901
     max_checkpoints: int = 20,
     checkpoint_store: CheckpointStore | None = None,
     include_teams: bool = False,
+    include_monitoring: bool = True,
     include_improve: bool = False,
     include_liteparse: bool = False,
     stuck_loop_detection: bool = True,
@@ -1161,6 +1166,7 @@ def create_deep_agent(  # noqa: C901
                     include_skills=False,
                     include_plan=False,
                     include_teams=False,
+                    include_monitoring=False,
                     context_manager=False,
                     cost_tracking=False,
                     edit_format=_team_edit_fmt,
@@ -1170,6 +1176,12 @@ def create_deep_agent(  # noqa: C901
 
         team_toolset = create_team_toolset(**_team_kwargs)
         all_toolsets.append(team_toolset)
+
+    # Monitor toolset (watch & react) — start_monitor / list_monitors / stop_monitor.
+    # Needs a background-capable backend at runtime; the tools no-op gracefully
+    # otherwise, so it's safe to include by default.
+    if include_monitoring:
+        all_toolsets.append(create_monitor_toolset())
 
     base_instructions = instructions if instructions is not None else DEFAULT_INSTRUCTIONS
 

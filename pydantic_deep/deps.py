@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pydantic_deep.features.checkpointing import CheckpointStore
     from pydantic_deep.features.forking.coordinator import ForkCoordinator
     from pydantic_deep.features.message_queue import MessageQueue
+    from pydantic_deep.features.monitoring import MonitorManager
     from pydantic_deep.features.plan.toolset import PlanOption
 
     #: Interactive-question callback used by the plan `ask_user` tool.
@@ -66,6 +67,7 @@ class DeepAgentDeps:
     share_todos: bool = False  # When True, subagents share parent's todo list
     checkpoint_store: CheckpointStore | None = field(default=None, repr=False)
     message_queue: MessageQueue | None = field(default=None, repr=False)
+    monitor_manager: MonitorManager | None = field(default=None, repr=False)
     fork_coordinator: ForkCoordinator | None = field(default=None, repr=False)
     _fork_depth: int = field(default=0, repr=False)
     _branch_cost_tracking: CostTracking | None = field(default=None, repr=False)
@@ -272,6 +274,9 @@ class DeepAgentDeps:
         - `context_middleware`: a CLI-only handle used by `/compact` and
           `/context` over the *parent's* history; a subagent has its own
           history and never runs those commands.
+        - `monitor_manager`: monitors are a top-level concern; a subagent
+          starts with none rather than inheriting/duplicating the parent's
+          background watches.
         - `fork_coordinator`: allocated lazily per-run by the fork
           capability, so a forking subagent gets its own (mirrors how
           `clone_for_branch` resets it).
@@ -295,6 +300,7 @@ class DeepAgentDeps:
             todos=self.todos if self.share_todos else [],
             subagents=self.subagents.copy() if max_depth > 0 else {},
             context_middleware=None,
+            monitor_manager=None,
             fork_coordinator=None,
             _fork_depth=0,
             _branch_cost_tracking=None,

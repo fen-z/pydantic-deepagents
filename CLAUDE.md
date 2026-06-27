@@ -145,6 +145,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Uses runtime `ctx.deps.backend` for writing
 - Supports `on_eviction` callback for notification when content is evicted
 
+**Monitor — watch & react (`pydantic_deep/features/monitoring/`)**
+- `MonitorManager`: spawns a long-lived command via the backend's background-process support, drains its output on an interval, filters new lines by an optional regex, and pushes each batch as a `MonitorEvent` through an `on_event` sink
+- `create_monitor_toolset()`: agent tools `start_monitor` / `list_monitors` / `stop_monitor`
+- `MonitorEvent`, `MonitorInfo`: event batch + status snapshot
+- "React" path: the toolset wires `on_event` to `ctx.deps.message_queue` (steering), so new output is delivered back into the conversation and the agent reacts without polling
+- Requires a background-capable backend (e.g. `LocalBackend`); tools no-op gracefully otherwise
+- Enabled by default via `include_monitoring=True`; lives on `deps.monitor_manager` (lazily created, reset for subagents)
+
 **Stuck Loop Detection (`pydantic_deep/features/stuck_loop/capability.py`)**
 - `StuckLoopDetection`: Capability — detects repetitive agent behavior via `after_tool_execute`
 - Three patterns: repeated identical calls, A-B-A-B alternating, no-op (same result)
