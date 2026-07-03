@@ -83,6 +83,10 @@ _GCP_CREDS_CONTAINER_PATH = "/tmp/gcp-credentials.json"
 # Default location of user Application Default Credentials on the host.
 _DEFAULT_ADC_PATH = "~/.config/gcloud/application_default_credentials.json"
 
+# Benchmark AGENTS.md shipped next to this adapter, injected into the task's
+# working directory so pydantic-deep's context discovery picks it up.
+_AGENTS_MD_PATH = "AGENTS.md"
+
 # OTEL identity for benchmark traces in Logfire.
 _OTEL_SERVICE_NAME = "pydantic-deep-tb"
 _OTEL_ENVIRONMENT = "terminal-bench"
@@ -202,9 +206,11 @@ class PydanticDeepAgent(BaseInstalledAgent):
         pai_model = convert_model_name(self.model_name) if self.model_name else None
 
         # Assemble the container env: API keys + Vertex config, GCP credentials
-        # (base64), and OTEL tags so each task's Logfire trace is identifiable.
+        # (base64), a benchmark AGENTS.md, and OTEL tags so each task's Logfire
+        # trace is identifiable.
         env = collect_env_vars()
         env.update(_build_gcp_credentials_env())
+        env.update(_build_agents_md_env())
         env.update(self._build_otel_env())
 
         command = build_run_command(
@@ -412,6 +418,24 @@ def _build_gcp_credentials_env() -> dict[str, str]:
     return {}
 
 
+def _build_agents_md_env() -> dict[str, str]:
+    """Base64-encode the bundled benchmark AGENTS.md for container injection.
+
+    Returns ``{"HARBOR_AGENTS_MD_B64": ...}`` when the file exists next to this
+    adapter, else ``{}``. The run command decodes it into the task's working
+    directory (unless the task ships its own AGENTS.md), where pydantic-deep's
+    context discovery loads it into the system prompt.
+    """
+    import base64
+    from pathlib import Path
+
+    agents_md = Path(__file__).resolve().parent / _AGENTS_MD_PATH
+    if not agents_md.is_file():
+        return {}  # pragma: no cover
+    encoded = base64.b64encode(agents_md.read_bytes()).decode("ascii")
+    return {"HARBOR_AGENTS_MD_B64": encoded}
+
+
 def build_run_command(
     *,
     instruction: str,
@@ -435,6 +459,10 @@ def build_run_command(
         'if [ -n "${GCP_CREDS_B64:-}" ]; then'
         f' echo "$GCP_CREDS_B64" | base64 -d > {_GCP_CREDS_CONTAINER_PATH};'
         f" export GOOGLE_APPLICATION_CREDENTIALS={_GCP_CREDS_CONTAINER_PATH}; fi;",
+        # Drop the benchmark AGENTS.md into the working dir for context discovery,
+        # unless the task already ships its own.
+        f'if [ ! -f {_AGENTS_MD_PATH} ] && [ -n "${{HARBOR_AGENTS_MD_B64:-}}" ]; then'
+        f' echo "$HARBOR_AGENTS_MD_B64" | base64 -d > {_AGENTS_MD_PATH}; fi;',
         "pydantic-deep",
     ]
 

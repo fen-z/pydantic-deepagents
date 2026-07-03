@@ -194,6 +194,13 @@ class TestBuildRunCommand:
         assert "GCP_CREDS_B64" in cmd
         assert "GOOGLE_APPLICATION_CREDENTIALS" in cmd
 
+    def test_agents_md_injection_present(self) -> None:
+        cmd = build_run_command(instruction="Fix")
+        # Decodes the bundled AGENTS.md into the working dir, but never clobbers
+        # a task's own AGENTS.md.
+        assert "HARBOR_AGENTS_MD_B64" in cmd
+        assert "[ ! -f AGENTS.md ]" in cmd
+
     def test_with_model(self) -> None:
         cmd = build_run_command(instruction="Fix", model="anthropic:claude-opus-4-6")
         assert "--model" in cmd

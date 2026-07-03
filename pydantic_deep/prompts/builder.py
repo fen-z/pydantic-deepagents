@@ -25,10 +25,10 @@ _CORE: tuple[str, ...] = (
     f.VERIFICATION,
 )
 
-# Extra sections added only when running non-interactively (benchmarks, CI,
-# scripted automation) — autonomy, exact-match discipline, absolute paths.
-_NON_INTERACTIVE: tuple[str, ...] = (
-    f.AUTONOMY,
+# Benchmark-only discipline sections, added after the core when running
+# non-interactively (exact-match, absolute paths). `AUTONOMY` is placed up top
+# instead — it sets the "no user, keep going" frame and reads best first.
+_NON_INTERACTIVE_TAIL: tuple[str, ...] = (
     f.EXACTNESS,
     f.PATH_HANDLING,
 )
@@ -45,8 +45,8 @@ def build_system_prompt(
 
     Args:
         non_interactive: Running with no user to answer questions (benchmarks,
-            CI, scripts). Adds the autonomy, exactness, and path-handling
-            sections.
+            CI, scripts). Leads with the autonomy section and appends the
+            exactness and path-handling discipline.
         lean: With ``non_interactive``, use the minimal benchmark prompt only.
         working_dir: Absolute root the agent operates in. Appended as a
             working-directory section when given.
@@ -58,11 +58,16 @@ def build_system_prompt(
     if non_interactive and lean:
         sections: list[str] = [f.LEAN]
     else:
-        sections = list(_CORE)
+        # Identity first; in non-interactive mode the autonomy frame comes right
+        # after it (top of prompt), not buried in the middle.
+        sections = [f.IDENTITY]
+        if non_interactive:
+            sections.append(f.AUTONOMY)
+        sections.extend(_CORE[1:])
         if forking:
             sections.append(f.FORKING)
         if non_interactive:
-            sections.extend(_NON_INTERACTIVE)
+            sections.extend(_NON_INTERACTIVE_TAIL)
 
     if working_dir:
         sections.append(f.working_directory(working_dir))

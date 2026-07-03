@@ -154,6 +154,9 @@ def create_cli_agent(  # noqa: C901
     periodic_reminder: bool | None = None,
     reminder_mode: Literal["off", "first", "context", "llm"] | None = None,
     reminder_model: str | None = None,
+    forking: bool | None = None,
+    include_improve: bool | None = None,
+    tool_search: bool | None = None,
 ) -> tuple[Any, DeepAgentDeps]:
     """Create a CLI-configured agent with all pydantic-deep capabilities.
 
@@ -279,12 +282,17 @@ def create_cli_agent(  # noqa: C901
     if extra_middleware:
         middleware.extend(extra_middleware)
 
+    # Forking (and other benchmark-profile flags) default OFF non-interactively;
+    # resolve forking here so the prompt's Forking section matches the capability.
+    _forking = forking if forking is not None else not non_interactive
+
     # When using Docker sandbox, the agent operates inside the container at /workspace
     instruction_root = "/workspace" if effective_sandbox == "docker" else str(root.resolve())
     instructions = build_system_prompt(
         non_interactive=non_interactive,
         lean=lean,
         working_dir=instruction_root,
+        forking=_forking,
     )
 
     if extra_instructions:
@@ -355,9 +363,17 @@ def create_cli_agent(  # noqa: C901
 
     effective_skills = _skills if not lean else False
     effective_plan = _plan if not lean else False
-    effective_memory = _memory if not lean else False
     effective_subagents = _subagents if not lean else False
     effective_todo = _todo if not lean else False
+
+    # Benchmark/automation profile: self-improvement, deferred tool search, and
+    # cross-session memory add no value in a single-shot non-interactive run —
+    # default them OFF there (each still overridable). `_forking` is resolved
+    # earlier (needed for the prompt).
+    _improve = include_improve if include_improve is not None else not non_interactive
+    _tool_search = tool_search if tool_search is not None else config.tool_search
+    effective_tool_search = _tool_search and not lean and not non_interactive
+    effective_memory = _memory if (not lean and not non_interactive) else False
 
     _browser = include_browser if include_browser is not None else config.include_browser
     effective_browser = _browser if not lean else False
@@ -453,10 +469,14 @@ def create_cli_agent(  # noqa: C901
         context_discovery=_context_disc if not lean else False,
         include_teams=(include_teams if include_teams is not None else config.include_teams),
         include_liteparse=effective_liteparse,
-        include_improve=True,
+        include_improve=_improve,
         # Defer the situational tool surface so only the core loop loads upfront.
-        tool_search=(config.tool_search if not lean else False),
-        forking=LiveForkCapability(test_command=_detect_fork_test_command(effective_backend)),
+        tool_search=effective_tool_search,
+        forking=(
+            LiveForkCapability(test_command=_detect_fork_test_command(effective_backend))
+            if _forking
+            else False
+        ),
         # Web tools — explicit params override config
         web_search=(
             web_search if web_search is not None else (config.web_search if not lean else False)
