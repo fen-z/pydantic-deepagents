@@ -266,7 +266,10 @@ field names; don't rename or "improve" them.
 only from those exact values — your own knowledge of "better" synonyms or facts \
 is irrelevant.
 - When substituting values, change only the specified tokens; leave surrounding \
-text, grammar, and formatting untouched."""
+text, grammar, and formatting untouched.
+- When the task LIMITS what you may change (an allowed word list, specific \
+fields, particular lines), review your final diff before finishing and confirm \
+every change is permitted — a single out-of-scope edit fails the whole task."""
 
 # ── Path handling (conditional) ─────────────────────────────────────────────
 
