@@ -505,7 +505,7 @@ class TestGlobalProjectMerge:
         assert c.model == "project:m"  # project wins
         assert c.theme == "dark"  # global base preserved
 
-    def test_explicit_path_ignores_global(self, tmp_path) -> None:
+    def test_explicit_path_ignores_global(self, tmp_path: Path) -> None:
         from apps.cli import config as cfg
 
         cfg.get_global_config_path().write_text('model = "global:m"\n')
@@ -515,7 +515,7 @@ class TestGlobalProjectMerge:
         assert c.theme == "light"
         assert c.model != "global:m"  # explicit path is single-file
 
-    def test_config_has_model_and_needs_onboarding(self, monkeypatch) -> None:
+    def test_config_has_model_and_needs_onboarding(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from apps.cli import config as cfg
         from apps.cli.onboarding_cli import needs_onboarding
 
@@ -527,7 +527,7 @@ class TestGlobalProjectMerge:
         assert cfg.config_has_model() is True
         assert needs_onboarding() is False
 
-    def test_env_model_counts_as_configured(self, monkeypatch) -> None:
+    def test_env_model_counts_as_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from apps.cli import config as cfg
 
         monkeypatch.setenv("PYDANTIC_DEEP_MODEL", "env:m")

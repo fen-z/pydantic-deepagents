@@ -26,7 +26,7 @@ class TestHeroBanner:
     async def test_renders_wordmark_and_rotates_tip(self) -> None:
         from apps.cli.widgets.hero import HeroBanner
 
-        class _Harness(App):
+        class _Harness(App[None]):
             def compose(self) -> ComposeResult:
                 yield HeroBanner(version="9.9.9")
 
@@ -44,7 +44,7 @@ class TestHeroBanner:
     async def test_narrow_terminal_uses_compact_mark(self) -> None:
         from apps.cli.widgets.hero import HeroBanner
 
-        class _Harness(App):
+        class _Harness(App[None]):
             def compose(self) -> ComposeResult:
                 yield HeroBanner()
 
@@ -58,7 +58,7 @@ class TestThinkingPicker:
     async def test_current_level_highlighted(self) -> None:
         from apps.cli.modals.thinking_picker import ThinkingPickerModal
 
-        class _Harness(App):
+        class _Harness(App[None]):
             async def on_mount(self) -> None:
                 self.push_screen(ThinkingPickerModal("medium"))
 

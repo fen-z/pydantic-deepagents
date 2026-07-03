@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
 @pytest.fixture
-def isolated_dirs(tmp_path, monkeypatch):
+def isolated_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     """Point global (~/.pydantic-deep) and project (./.pydantic-deep) at tmp dirs."""
     global_dir = tmp_path / "home" / ".pydantic-deep"
     project_dir = tmp_path / "proj" / ".pydantic-deep"
@@ -28,7 +30,8 @@ class TestCredentials:
     def test_find_and_categories(self) -> None:
         from apps.cli.credentials import credentials_by_category, find_credential
 
-        assert find_credential("OPENROUTER_API_KEY").provider_id == "openrouter"
+        cred = find_credential("OPENROUTER_API_KEY")
+        assert cred is not None and cred.provider_id == "openrouter"
         assert find_credential("NOPE") is None
         cats = credentials_by_category()
         assert "Model providers" in cats and "Vertex AI" in cats
@@ -46,7 +49,9 @@ class TestCredentials:
 
 
 class TestKeystore:
-    def test_save_load_global(self, isolated_dirs, monkeypatch) -> None:
+    def test_save_load_global(
+        self, isolated_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from apps.cli import keystore
 
         keystore.save_key("OPENROUTER_API_KEY", "sk-glob")
@@ -54,7 +59,9 @@ class TestKeystore:
         loaded = keystore.load_keys()
         assert loaded["OPENROUTER_API_KEY"] == "sk-glob"
 
-    def test_project_overrides_global(self, isolated_dirs, monkeypatch) -> None:
+    def test_project_overrides_global(
+        self, isolated_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from apps.cli import keystore
 
         keystore.save_key("DEEPSEEK_API_KEY", "sk-glob", scope="global")
@@ -66,7 +73,9 @@ class TestKeystore:
 
         assert os.environ["DEEPSEEK_API_KEY"] == "sk-proj"
 
-    def test_env_wins_over_stored(self, isolated_dirs, monkeypatch) -> None:
+    def test_env_wins_over_stored(
+        self, isolated_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from apps.cli import keystore
 
         keystore.save_key("ANTHROPIC_API_KEY", "sk-stored")
@@ -74,14 +83,14 @@ class TestKeystore:
         loaded = keystore.load_keys()
         assert loaded["ANTHROPIC_API_KEY"] == "sk-real-env"
 
-    def test_remove(self, isolated_dirs) -> None:
+    def test_remove(self, isolated_dirs: tuple[Path, Path]) -> None:
         from apps.cli import keystore
 
         keystore.save_key("OPENROUTER_API_KEY", "sk-x")
         keystore.remove_key("OPENROUTER_API_KEY")
         assert "OPENROUTER_API_KEY" not in keystore.get_stored_keys("global")
 
-    def test_special_chars_roundtrip(self, isolated_dirs) -> None:
+    def test_special_chars_roundtrip(self, isolated_dirs: tuple[Path, Path]) -> None:
         from apps.cli import keystore
 
         val = 'sk-"weird"\\value'
@@ -97,13 +106,18 @@ class TestKeysCmd:
         from apps.cli.credentials import CREDENTIALS
         from apps.cli.keys_cmd import resolve_credential
 
-        assert resolve_credential("1").env_var == CREDENTIALS[0].env_var
-        assert resolve_credential("OPENROUTER_API_KEY").provider_id == "openrouter"
-        assert resolve_credential("openrouter_api_key").provider_id == "openrouter"
+        by_num = resolve_credential("1")
+        assert by_num is not None and by_num.env_var == CREDENTIALS[0].env_var
+        by_name = resolve_credential("OPENROUTER_API_KEY")
+        assert by_name is not None and by_name.provider_id == "openrouter"
+        by_lower = resolve_credential("openrouter_api_key")
+        assert by_lower is not None and by_lower.provider_id == "openrouter"
         assert resolve_credential("999") is None
         assert resolve_credential("NOT_A_KEY") is None
 
-    def test_iter_status(self, isolated_dirs, monkeypatch) -> None:
+    def test_iter_status(
+        self, isolated_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from apps.cli import keystore
         from apps.cli.keys_cmd import iter_key_status
 
@@ -120,7 +134,7 @@ class TestKeysCmd:
 
 
 class TestModelHistory:
-    def test_record_dedup_newest_first(self, isolated_dirs) -> None:
+    def test_record_dedup_newest_first(self, isolated_dirs: tuple[Path, Path]) -> None:
         from apps.cli.model_history import recent_models, record_model_use
 
         record_model_use("openrouter:deepseek/deepseek-v4-flash")
@@ -131,7 +145,7 @@ class TestModelHistory:
             "google-cloud:gemini-3.1-pro-preview",
         ]
 
-    def test_empty_and_cap(self, isolated_dirs) -> None:
+    def test_empty_and_cap(self, isolated_dirs: tuple[Path, Path]) -> None:
         from apps.cli.model_history import recent_models, record_model_use
 
         assert recent_models() == []
@@ -174,7 +188,7 @@ class TestOpenRouterParse:
 
 
 class TestOnboarding:
-    def test_new_user_and_mark(self, isolated_dirs) -> None:
+    def test_new_user_and_mark(self, isolated_dirs: tuple[Path, Path]) -> None:
         from apps.cli.onboarding_cli import is_new_user, mark_onboarded
 
         assert is_new_user() is True
@@ -191,7 +205,9 @@ class TestOnboarding:
         # GEMINI + GOOGLE both map to google → only one entry
         assert ids.count("google") == 1
 
-    def test_run_onboarding_saves_key_and_marks(self, isolated_dirs, monkeypatch) -> None:
+    def test_run_onboarding_saves_key_and_marks(
+        self, isolated_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from apps.cli import keystore, onboarding_cli
 
         answers = iter(["1", "sk-or-testkey-1234567", "openrouter:anthropic/claude-sonnet-4"])
@@ -203,7 +219,9 @@ class TestOnboarding:
         assert keystore.get_stored_keys("global")["OPENROUTER_API_KEY"] == "sk-or-testkey-1234567"
         assert onboarding_cli.is_new_user() is False  # marked onboarded
 
-    def test_run_onboarding_skip(self, isolated_dirs, monkeypatch) -> None:
+    def test_run_onboarding_skip(
+        self, isolated_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from apps.cli import keystore, onboarding_cli
 
         monkeypatch.setattr("typer.prompt", lambda *a, **k: "0")
@@ -212,7 +230,9 @@ class TestOnboarding:
         assert keystore.get_stored_keys("global") == {}  # nothing saved
         assert onboarding_cli.is_new_user() is False  # still marked so we don't nag again
 
-    def test_detection_survives_dir_created_by_other_code(self, isolated_dirs) -> None:
+    def test_detection_survives_dir_created_by_other_code(
+        self, isolated_dirs: tuple[Path, Path]
+    ) -> None:
         # Regression: the update-check cache (and keystore) create ~/.pydantic-deep.
         # The callback must capture new-user status BEFORE that happens.
         from apps.cli.onboarding_cli import is_new_user
@@ -240,7 +260,7 @@ class TestKnownModels:
         allm = [m for ms in cat.values() for m in ms]
         assert not any("whisper" in m or "tts" in m or "guard" in m for m in allm)
 
-    def test_provider_sections_keyed_first(self, monkeypatch) -> None:
+    def test_provider_sections_keyed_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from apps.cli.known_models import provider_sections
 
         for var in ("XAI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ANTHROPIC_API_KEY"):

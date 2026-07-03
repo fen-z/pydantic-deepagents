@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 from textual.app import App
+from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList
 
 
 @pytest.fixture
-def seeded_openrouter(monkeypatch, tmp_path):
+def seeded_openrouter(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Seed an OpenRouter cache so the model picker has models to filter."""
     from apps.cli import openrouter_models
 
@@ -26,8 +30,8 @@ def seeded_openrouter(monkeypatch, tmp_path):
     monkeypatch.setattr("apps.cli.model_history.get_global_dir", lambda: tmp_path / "nohist")
 
 
-async def _open(modal):
-    class _Harness(App):
+async def _open(modal: ModalScreen[Any]) -> App[None]:
+    class _Harness(App[None]):
         async def on_mount(self) -> None:
             await self.push_screen(modal)
 
@@ -35,7 +39,7 @@ async def _open(modal):
 
 
 class TestModelPicker:
-    async def test_input_focused_and_search_filters(self, seeded_openrouter) -> None:
+    async def test_input_focused_and_search_filters(self, seeded_openrouter: None) -> None:
         from apps.cli.modals.model_picker import ModelPickerModal
 
         app = await _open(ModelPickerModal("x"))
@@ -51,21 +55,23 @@ class TestModelPicker:
             await pilot.pause()
             assert inp.value == "deepseek"
             ids = [
-                ol.get_option_at_index(i).id
+                oid
                 for i in range(ol.option_count)
-                if ol.get_option_at_index(i).id
+                if (oid := ol.get_option_at_index(i).id) is not None
             ]
             assert ids and all("deepseek" in i for i in ids)
             assert ol.option_count < before  # filtered down
 
-    async def test_enter_after_filter_returns_highlighted_model(self, seeded_openrouter) -> None:
+    async def test_enter_after_filter_returns_highlighted_model(
+        self, seeded_openrouter: None
+    ) -> None:
         # Regression: typing a bare term + Enter must resolve to a real model
         # string, not the literal term (which infer_model rejects as unknown).
         from apps.cli.modals.model_picker import ModelPickerModal
 
         result: dict[str, str | None] = {}
 
-        class _Harness(App):
+        class _Harness(App[None]):
             async def on_mount(self) -> None:
                 def _cb(r: str | None) -> None:
                     result["r"] = r
@@ -99,8 +105,8 @@ class TestKeysPicker:
                 await pilot.press(ch)
             await pilot.pause()
             ids = [
-                ol.get_option_at_index(i).id
+                oid
                 for i in range(ol.option_count)
-                if ol.get_option_at_index(i).id
+                if (oid := ol.get_option_at_index(i).id) is not None
             ]
             assert ids == ["OPENROUTER_API_KEY"]

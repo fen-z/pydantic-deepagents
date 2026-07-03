@@ -282,13 +282,13 @@ class TestBasePrompt:
 class TestSubmodelInheritance:
     """Submodels inherit the primary model when not explicitly configured."""
 
-    def _capture_summarization(self, monkeypatch, **kwargs) -> str | None:
+    def _capture_summarization(self, monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> str | None:
         from pydantic_ai_summarization import ContextManagerCapability
 
         seen: dict[str, str | None] = {}
         orig = ContextManagerCapability.__init__
 
-        def spy(self, *a, **k):
+        def spy(self: Any, *a: Any, **k: Any) -> Any:
             seen["sm"] = k.get("summarization_model")
             return orig(self, *a, **k)
 
