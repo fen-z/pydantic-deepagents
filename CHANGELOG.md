@@ -5,6 +5,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Onboarding and per-user configuration, a dynamic model catalogue in the picker,
+credential management from the CLI/TUI, reasoning-effort and project-init
+commands, a prompt/reminder overhaul, and a Terminal-Bench harness.
+
+### Added
+
+#### CLI / TUI
+
+- **First-run onboarding** — on first launch (when no model is configured
+  anywhere) the CLI walks you through picking a provider, entering its key, and
+  choosing a model. The choice is saved to the user-level config so it carries
+  across every project. Re-runnable any time with `pydantic-deep onboard`.
+- **Credential management** — `pydantic-deep keys list / set / remove` and an
+  in-TUI **`/keys`** picker set any of the known credentials (model providers,
+  Vertex, Logfire, AWS, Azure) from one registry into a git-ignored keystore.
+  Keys are user-global by default (`~/.pydantic-deep/keys.toml`) and loaded into
+  the environment on startup; `--project` scopes them to one repo. Real env vars
+  always win.
+- **Dynamic model catalogue** — the **`/model`** picker (aliased **`/models`**)
+  now lists recently-used models, the **live OpenRouter catalogue** (fetched and
+  cached under `~/.pydantic-deep/cache/`, refreshed in the background), and every
+  native provider pydantic-ai recognises (read from its `KnownModelName`, keyed
+  providers first), all with real fuzzy search. On the CLI: `pydantic-deep models
+  recent / openrouter / select`. Recently-used models are remembered per user.
+- **`/thinking`** — change reasoning effort (off → xhigh) from a picker or
+  `/thinking <level>`; it applies live and persists.
+- **`/init`** — analyse the project and write an `AGENTS.md` so the agent has
+  context (and seed `MEMORY.md`).
+- **Welcome hero** — the splash now renders a magenta `pydantic` ASCII wordmark
+  and a rotating tip (it was previously a defined-but-never-mounted widget).
+- **Interactive CLI pickers** — `keys set` and `models select` open
+  arrow-selectable lists with hidden value entry (prompt_toolkit) when run
+  without arguments; the argument forms stay scriptable.
+
+#### Framework
+
+- **Submodels inherit the primary model** when not explicitly configured — an
+  undefined summarization / reminder / judge model now falls back to the main
+  model instead of a hard-coded default.
+
+#### Benchmark
+
+- **`apps/harbor`** — a Harbor `BaseInstalledAgent` adapter to evaluate the CLI
+  agent on **Terminal-Bench 2.0**, with Logfire tracing and per-task trace tags,
+  installing pydantic-deep into the task container and forwarding the full agent
+  feature set. A benchmark `AGENTS.md` encodes the task-solving rules.
+
+### Changed
+
+- **User-level vs project configuration** — `load_config()` now merges a global
+  `~/.pydantic-deep/config.toml` (user defaults: model, theme, thinking) as the
+  base with the project `.pydantic-deep/config.toml` as overrides; environment
+  variables win over both. The model chosen during onboarding lives in the global
+  config so new projects don't re-prompt.
+- **Onboarding is triggered by "no model configured"** (env / project / global
+  config) rather than by the absence of `~/.pydantic-deep/`, which incidental
+  caches (update check, keystore) created too early to be a reliable signal.
+- **Context files are no longer auto-created.** `AGENTS.md`, `SOUL.md` and
+  `MEMORY.md` are written only by the agent when it decides to (`write_memory` /
+  `write_file`), by `/init`, or by the user — never scaffolded on launch. Missing
+  files are silently skipped and `write_memory` creates `MEMORY.md` on demand, so
+  the agent works with or without them.
+- **System prompt consolidated** into `pydantic_deep/prompts/` — one set of
+  composable fragments + a builder, replacing the scattered CLI/prompt strings;
+  the old `apps/cli/prompts.py` is now a thin re-export.
+- **Periodic reminder cadence** relaxed to every 15 turns (first after 15, no
+  per-run cap) so long tasks aren't nagged as often.
+
+### Fixed
+
+- **`/model` was effectively unusable** — the picker didn't focus its input (you
+  couldn't type), the "filter" never actually filtered the list, and pressing
+  Enter on a typed term submitted the raw text (`qwen` → *"Unknown model:
+  qwen"*) instead of selecting the highlighted match. All three fixed; a
+  duplicate-id crash when a model appeared in both "recent" and a provider list
+  was resolved.
+- **Changing the model now updates the input footer live** — the session line
+  under the prompt read `model_name` lazily and only refreshed after an app
+  restart.
+- **Headless runs survive flaky provider responses** — the graceful-exit path
+  now also catches transport/gateway failures (`ModelHTTPError`,
+  `httpx.HTTPError`, and `json.JSONDecodeError` from a non-JSON gateway body) and
+  exits 0 so downstream verification can still grade the filesystem, instead of a
+  hard non-zero crash.
+
 ## [0.3.34] - 2026-06-27
 
 A large release: a full CLI/TUI overhaul, a vertical-slice re-organization of the

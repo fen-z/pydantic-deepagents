@@ -298,17 +298,21 @@ class TestSubmodelInheritance:
         )
         return seen.get("sm")
 
-    def test_summarization_inherits_primary_model(self, monkeypatch):
-        sm = self._capture_summarization(monkeypatch, model="google-cloud:gemini-3.1-pro-preview")
-        assert sm == "google-cloud:gemini-3.1-pro-preview"
+    def test_summarization_inherits_primary_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # anthropic + a dummy key: provider construction needs a key but no network
+        # or ADC, so this runs in CI. The test only checks the inherited string.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        sm = self._capture_summarization(monkeypatch, model="anthropic:claude-sonnet-4-6")
+        assert sm == "anthropic:claude-sonnet-4-6"
 
-    def test_explicit_summarization_model_wins(self, monkeypatch):
+    def test_explicit_summarization_model_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         sm = self._capture_summarization(
             monkeypatch,
-            model="google-cloud:gemini-3.1-pro-preview",
-            summarization_model="google-cloud:gemini-3.1-flash-lite-preview",
+            model="anthropic:claude-opus-4-6",
+            summarization_model="anthropic:claude-haiku-4-5",
         )
-        assert sm == "google-cloud:gemini-3.1-flash-lite-preview"
+        assert sm == "anthropic:claude-haiku-4-5"
 
 
 class TestImageSupport:
