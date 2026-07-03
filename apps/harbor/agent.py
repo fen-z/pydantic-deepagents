@@ -442,11 +442,12 @@ def build_run_command(
     if logfire:
         parts.append("--logfire")
 
+    # No `--verbose`: its per-event stderr streaming is redundant with Logfire
+    # (which captures the full trace) and only adds noise to the captured log.
     parts += [
         "run",
         shlex.quote(instruction),
         "--json",
-        "--verbose",
     ]
 
     if model:

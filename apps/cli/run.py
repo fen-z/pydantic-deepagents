@@ -202,8 +202,8 @@ async def _run_verbose(agent: Any, task: str, deps: Any, run_kwargs: dict[str, A
                             args_preview = str(event.part.args)[:80]
                             _log(f"[{e:6.1f}s] tool: {name}({args_preview})")
                         elif isinstance(event, FunctionToolResultEvent):
-                            name = getattr(event.result, "tool_name", "?")
-                            content = str(event.result.content)
+                            name = getattr(event.part, "tool_name", "?")
+                            content = str(event.content)
                             _log(f"[{e:6.1f}s]   -> {name}: {content[:120]}")
 
             elif isinstance(node, End):
